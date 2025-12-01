@@ -155,73 +155,45 @@ for ftt_ in ftts:
         exp_name_ = f'cla_{ftt_.name}_{ftt_.dataset}_{tokenization}'
         baselines = []
 
-        # noBPE and tiny baseline
+        # noBPE baseline (will be trained and tested for comparison)
         tok_config_ = TokenizationConfig(tokenization, deepcopy(TOKENIZER_PARAMS))
-        # baselines.append(create_baseline(ftt_, f"{tokenization}_noBPE_tiny", exp_name_, tok_config_))
         baselines.append(create_baseline(ftt_, f"{tokenization}_noBPE", exp_name_, tok_config_))
 
-        # BPE baselines
+        # BPE baselines (vocab sizes 1000, 5000) - these will be trained and tested
         for bpe_vocab_size in BPE_VOCAB_SIZES:
             tok_config_ = TokenizationConfig(tokenization, deepcopy(TOKENIZER_PARAMS), bpe_vocab_size)
             baselines.append(create_baseline(ftt_, f"{tokenization}_bpe{bpe_vocab_size}", exp_name_, tok_config_))
 
-        # PVm / PVDm
-        for token_combination in ['PVm', 'PVDm']:
-            tok_name = f'{tokenization}{token_combination}'
-            tok_config_ = TokenizationConfig(tok_name, deepcopy(TOKENIZER_PARAMS))
-            baselines.append(create_baseline(ftt_, tok_name, exp_name_, tok_config_))
-
-        # Embedding Pooling
-        if tokenization == 'REMI':  # adds CPWord and Octuple for comparison
-            for tok in ['CPWord', 'OctupleMono']:
-                datas = f'{ftt_.dataset}-short' if tok == 'OctupleMono' else ftt_.dataset
-                tok_config_ = TokenizationConfig(tok, deepcopy(TOKENIZER_PARAMS))
-                baselines.append(create_baseline(ftt_, tok, exp_name_, tok_config_))
-                baselines[-1].dataset = datas
-                baselines[-1].tokens_path = Path("data", f"{datas}_{baselines[-1].tokenization}")
-                baselines[-1].embed_pooling_size = EMBED_POOLING_SIZE
-
         experiments.append(Experiment(exp_name_, baselines, ftt_.dataset))
 
 
-# MMD experiments
-for tokenization in ["TSDPlus"]:
-    for label_type, cls, nb_labels in [("genre", BaselineMMDGenre, MMD_NB_GENRES),
-                                       ("artist", BaselineMMDArtist, MMD_NB_ARTISTS)]:
-        exp_name_ = f"cla_{label_type}_MMD_{tokenization}"
-        TOKENIZER_PARAMS_MMD = deepcopy(TOKENIZER_PARAMS)
-        if tokenization == "REMIPlus":
-            TOKENIZER_PARAMS_MMD["max_bar_embedding"] = None
-        tok_config_ = TokenizationConfig(tokenization, TOKENIZER_PARAMS_MMD)
-        ftt_ = FineTuningTask(label_type, "MMD", nb_labels, cls)
-
-        # noBPE and tiny baseline
-        baselines = [
-            # create_baseline(ftt_, f"{tokenization}_noBPE_tiny", exp_name_, tok_config_),
-            create_baseline(ftt_, f"{tokenization}_noBPE", exp_name_, tok_config_)
-        ]
-
-        # BPE baselines
-        for bpe_vocab_size in BPE_VOCAB_SIZES:
-            tok_config_ = TokenizationConfig(tokenization, TOKENIZER_PARAMS_MMD, bpe_vocab_size)
-            baselines.append(create_baseline(ftt_, f"{tokenization}_bpe{bpe_vocab_size}", exp_name_, tok_config_))
-
-        # PVm / PVDm
-        for token_combination in ['PVm', 'PVDm']:
-            tok_name = f'{tokenization}{token_combination}'
-            tok_config_ = TokenizationConfig(tok_name, TOKENIZER_PARAMS)
-            baselines.append(create_baseline(ftt_, tok_name, exp_name_, tok_config_))
-
-        # # Embedding Pooling
-        # if tokenization == "REMIPlus":
-        #     datas = f"MMD-short"
-        #     tok_config_ = TokenizationConfig("Octuple", TOKENIZER_PARAMS)
-        #     baselines.append(create_baseline(ftt_, "Octuple", exp_name_, tok_config_))
-        #     baselines[-1].dataset = datas
-        #     baselines[-1].tokens_path = Path("data", f"{datas}_{baselines[-1].tokenization}")
-        #     baselines[-1].embed_pooling_size = EMBED_POOLING_SIZE
-
-        experiments.append(Experiment(exp_name_, baselines, ftt_.dataset))
+# MMD experiments - COMMENTED OUT (no MMD dataset available)
+# for tokenization in ["TSDPlus"]:
+#     for label_type, cls, nb_labels in [("genre", BaselineMMDGenre, MMD_NB_GENRES),
+#                                        ("artist", BaselineMMDArtist, MMD_NB_ARTISTS)]:
+#         exp_name_ = f"cla_{label_type}_MMD_{tokenization}"
+#         TOKENIZER_PARAMS_MMD = deepcopy(TOKENIZER_PARAMS)
+#         if tokenization == "REMIPlus":
+#             TOKENIZER_PARAMS_MMD["max_bar_embedding"] = None
+#         tok_config_ = TokenizationConfig(tokenization, TOKENIZER_PARAMS_MMD)
+#         ftt_ = FineTuningTask(label_type, "MMD", nb_labels, cls)
+# 
+#         # BPE baselines only (vocab sizes 1000, 5000)
+#         baselines = []
+#         for bpe_vocab_size in BPE_VOCAB_SIZES:
+#             tok_config_ = TokenizationConfig(tokenization, TOKENIZER_PARAMS_MMD, bpe_vocab_size)
+#             baselines.append(create_baseline(ftt_, f"{tokenization}_bpe{bpe_vocab_size}", exp_name_, tok_config_))
+# 
+#         # # Embedding Pooling
+#         # if tokenization == "REMIPlus":
+#         #     datas = f"MMD-short"
+#         #     tok_config_ = TokenizationConfig("Octuple", TOKENIZER_PARAMS)
+#         #     baselines.append(create_baseline(ftt_, "Octuple", exp_name_, tok_config_))
+#         #     baselines[-1].dataset = datas
+#         #     baselines[-1].tokens_path = Path("data", f"{datas}_{baselines[-1].tokenization}")
+#         #     baselines[-1].embed_pooling_size = EMBED_POOLING_SIZE
+# 
+#         experiments.append(Experiment(exp_name_, baselines, ftt_.dataset))
 
 
 metrics_names = [("f1", []), ("accuracy", []), ("roc_auc", ["multiclass"])]

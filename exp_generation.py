@@ -126,42 +126,20 @@ for dataset in datasets:
         exp_name = f'gen_{dataset}_{tokenization}'
         baselines = []
 
-        # noBPE and tiny baseline
-        """data_conf_, test_conf_, model_conf_, train_conf_, gen_conf_ = \
-            map(deepcopy, [data_config, test_config, model_config, training_config, generation_config])
-        tok_config = TokenizationConfig(tokenization, deepcopy(TOKENIZER_PARAMS))
-        baselines.append(BaselineGen(f"{tokenization}_noBPE_tiny", exp_name, dataset, SEED, tok_config,
-                                     model_conf_, train_conf_, data_conf_, test_conf_, gen_conf_))"""
+        # noBPE baseline (will be trained and tested for comparison)
         data_conf_, test_conf_, model_conf_, train_conf_, gen_conf_ = \
             map(deepcopy, [data_config, test_config, model_config, training_config, generation_config])
         tok_config = TokenizationConfig(tokenization, deepcopy(TOKENIZER_PARAMS))
         baselines.append(BaselineGen(f"{tokenization}_noBPE", exp_name, dataset, SEED, tok_config,
                                      model_conf_, train_conf_, data_conf_, test_conf_, gen_conf_))
 
-        # BPE baselines
+        # BPE baselines (vocab sizes 1000, 5000) - these will be trained and tested
         for bpe_vocab_size in BPE_VOCAB_SIZES:
             data_conf_, test_conf_, model_conf_, train_conf_, gen_conf_ = \
                 map(deepcopy, [data_config, test_config, model_config, training_config, generation_config])
             tok_config = TokenizationConfig(tokenization, deepcopy(TOKENIZER_PARAMS), bpe_vocab_size)
             baselines.append(BaselineGen(f"{tokenization}_bpe{bpe_vocab_size}", exp_name, dataset, SEED, tok_config,
                                          model_conf_, train_conf_, data_conf_, test_conf_, gen_conf_))
-        # PVm / PVDm
-        for token_combination in ['PVm', 'PVDm']:
-            data_conf_, test_conf_, model_conf_, train_conf_, gen_conf_ = \
-                map(deepcopy, [data_config, test_config, model_config, training_config, generation_config])
-            tok_name = f'{tokenization}{token_combination}'
-            tok_config = TokenizationConfig(tok_name, deepcopy(TOKENIZER_PARAMS))
-            baselines += [BaselineGen(tok_name, exp_name, dataset, SEED, tok_config, model_conf_, train_conf_,
-                                      data_conf_, test_conf_, gen_conf_)]
-        # Embedding Pooling
-        if tokenization == 'REMI':  # adds CPWord and Octuple for comparison
-            for tok in ['CPWord', 'OctupleMono']:
-                data_conf_, test_conf_, model_conf_, train_conf_, gen_conf_ = \
-                    map(deepcopy, [data_config, test_config, model_config, training_config, generation_config])
-                datas = f'{dataset}-short' if tok == 'OctupleMono' else dataset
-                tok_config = TokenizationConfig(tok, deepcopy(TOKENIZER_PARAMS))
-                baselines += [BaselineGen(tok, exp_name, datas, SEED, tok_config, model_conf_, train_conf_, data_conf_,
-                                          test_conf_, gen_conf_, embed_pooling_size=EMBED_POOLING_SIZE)]
 
         experiments.append(Experiment(exp_name, baselines, dataset))
 
@@ -335,9 +313,6 @@ if __name__ == '__main__':
         for baseline_ in exp_.baselines:
             if is_testing_done(baseline_.run_path):
                 continue
-            if baseline_.name.endswith("PVDm"):
-                baseline_.training_config.do_eval = False  # prevents OOM when resuming training on V100s
-                baseline_.training_config.evaluation_strategy = "no"
             if baseline_.tokenization == "CPWord":
                 for key in baseline_.tokenizer.tokens_types_graph:
                     baseline_.tokenizer.tokens_types_graph[key].append("Ignore")
