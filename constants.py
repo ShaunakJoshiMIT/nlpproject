@@ -29,8 +29,8 @@ TOKENIZER_PARAMS = {'pitch_range': PITCH_RANGE, 'beat_res': BEAT_RES, 'nb_veloci
                     'additional_tokens': ADDITIONAL_TOKENS, "special_tokens": SPECIAL_TOKENS}
 TIME_DIVISION = 384
 DATA_AUGMENTATION_OFFSETS = (2, 1, 0)
-BPE_VOCAB_SIZES = [1000, 5000, 10000, 20000]
-TOKENIZATIONS = ["TSD", "REMI"]
+BPE_VOCAB_SIZES = [1000, 5000]
+TOKENIZATIONS = ["TSD"]
 
 # Transformer config (for all models)
 DIM = 512

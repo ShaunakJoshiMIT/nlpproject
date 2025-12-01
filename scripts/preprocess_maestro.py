@@ -11,8 +11,9 @@ from tqdm import tqdm
 
 if __name__ == "__main__":
     # Make sure to rename the original POP909 directory to 'POP909-original'
-    final_path = Path("data", "Maestro")
-    temp_path = Path("data", "Maestro_tmp")
+    # Script is run from data/ directory, so use relative paths
+    final_path = Path("Maestro")
+    temp_path = Path("Maestro_tmp")
     shutil.move(final_path, temp_path)
     final_path.mkdir(parents=True, exist_ok=True)
     midi_paths = list(temp_path.glob("**/*.mid"))

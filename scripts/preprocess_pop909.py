@@ -15,8 +15,9 @@ from tqdm import tqdm
 
 if __name__ == "__main__":
     # Make sure to rename the original POP909 directory to 'POP909-original'
-    midi_paths = list(Path("data", "POP909-original").glob("**/*.mid"))
-    merged_out_dir = Path("data", "POP909")
+    # Script is run from data/ directory, so use relative paths
+    midi_paths = list(Path("POP909-original").glob("**/*.mid"))
+    merged_out_dir = Path("POP909")
     merged_out_dir.mkdir(parents=True, exist_ok=True)
 
     for i, midi_path in enumerate(

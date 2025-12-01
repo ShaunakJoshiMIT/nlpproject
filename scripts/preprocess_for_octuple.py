@@ -4,6 +4,7 @@
 
 """
 
+import sys
 from pathlib import Path
 from copy import deepcopy
 from math import ceil
@@ -11,24 +12,29 @@ from math import ceil
 from miditoolkit import MidiFile
 from tqdm import tqdm
 
+# Add project root to Python path (script is run from data/ directory)
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
 from dataset import list_mmd_files_paths
 from constants import OCT_MAX_BAR, MIN_NB_NOTES
 
 
 if __name__ == "__main__":
-    datasets = ["GiantMIDI", "POP909", "MMD"]
+    datasets = ["GiantMIDI"]
 
     for dataset in datasets:
-        merged_out_dir = Path("data", f"{dataset}-short")
+        # Script is run from data/ directory, so use relative paths
+        merged_out_dir = Path(f"{dataset}-short")
         if merged_out_dir.exists():
             continue
         merged_out_dir.mkdir(parents=True, exist_ok=True)
         if dataset == "MMD":
             midi_paths = list_mmd_files_paths(
-                Path("data", "MMD_METADATA", "midi_audio_matches.json")
+                Path("MMD_METADATA", "midi_audio_matches.json")
             )
         else:
-            midi_paths = list(Path("data", dataset).glob("**/*.mid"))
+            midi_paths = list(Path(dataset).glob("**/*.mid"))
 
         for i, midi_path in enumerate(
             tqdm(midi_paths, desc="PRE-PROCESSING FOR OCTUPLE")

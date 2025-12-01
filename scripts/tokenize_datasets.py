@@ -3,8 +3,14 @@
 """ Script to transform the MIDI datasets into tokens.
 
 """
-from typing import Union, Tuple, Dict, List
+import sys
 from pathlib import Path
+
+# Add project root to Python path to ensure local constants.py is imported
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
+from typing import Union, Tuple, Dict, List
 import json
 
 from miditok.utils import merge_tracks_per_class

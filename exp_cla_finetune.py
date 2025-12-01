@@ -185,7 +185,7 @@ for ftt_ in ftts:
 
 
 # MMD experiments
-for tokenization in ["TSDPlus", "REMIPlus"]:
+for tokenization in ["TSDPlus"]:
     for label_type, cls, nb_labels in [("genre", BaselineMMDGenre, MMD_NB_GENRES),
                                        ("artist", BaselineMMDArtist, MMD_NB_ARTISTS)]:
         exp_name_ = f"cla_{label_type}_MMD_{tokenization}"
@@ -212,14 +212,14 @@ for tokenization in ["TSDPlus", "REMIPlus"]:
             tok_config_ = TokenizationConfig(tok_name, TOKENIZER_PARAMS)
             baselines.append(create_baseline(ftt_, tok_name, exp_name_, tok_config_))
 
-        # Embedding Pooling
-        if tokenization == "REMIPlus":
-            datas = f"MMD-short"
-            tok_config_ = TokenizationConfig("Octuple", TOKENIZER_PARAMS)
-            baselines.append(create_baseline(ftt_, "Octuple", exp_name_, tok_config_))
-            baselines[-1].dataset = datas
-            baselines[-1].tokens_path = Path("data", f"{datas}_{baselines[-1].tokenization}")
-            baselines[-1].embed_pooling_size = EMBED_POOLING_SIZE
+        # # Embedding Pooling
+        # if tokenization == "REMIPlus":
+        #     datas = f"MMD-short"
+        #     tok_config_ = TokenizationConfig("Octuple", TOKENIZER_PARAMS)
+        #     baselines.append(create_baseline(ftt_, "Octuple", exp_name_, tok_config_))
+        #     baselines[-1].dataset = datas
+        #     baselines[-1].tokens_path = Path("data", f"{datas}_{baselines[-1].tokenization}")
+        #     baselines[-1].embed_pooling_size = EMBED_POOLING_SIZE
 
         experiments.append(Experiment(exp_name_, baselines, ftt_.dataset))
 

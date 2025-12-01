@@ -7,13 +7,18 @@ And make sure it pass our requirements.
 """
 
 import json
-from pathlib import PurePath
+import sys
+from pathlib import PurePath, Path
 
 from miditoolkit import MidiFile
 import networkx as nx
 import numpy as np
 import scipy.optimize
 from tqdm import tqdm
+
+# Add project root to Python path (script is run from data/ directory)
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
 
 from constants import MMD_MIDI_CATS_TO_MERGE, MMD_VALID_PROGRAMS
 from scripts.tokenize_datasets import is_midi_valid_multi
@@ -83,8 +88,9 @@ def clean_dataset(data_path: str, matches_file_path: str):
             midi_to_audio[midi_md5] = audio_sid
 
     # Saves the matching file + conversion params, in txt format
+    # Script is run from data/ directory, so use relative paths
     with open(
-        PurePath("data", "MMD_METADATA", "midi_audio_matches.json"), "w"
+        PurePath("MMD_METADATA", "midi_audio_matches.json"), "w"
     ) as outfile:
         json.dump(midi_to_audio, outfile, indent=2)
 
@@ -127,15 +133,15 @@ if __name__ == "__main__":
     parser.add_argument(
         "--mmd-path",
         type=str,
-        default="data/MMD",
+        default="MMD",
         help="the dataset to run. Corresponds to a path to a file",
     )
     parser.add_argument(
         "--mmd-matches-path",
         type=str,
-        default="data/MMD_METADATA/MMD_audio_text_matches.tsv",
+        default="MMD_METADATA/MMD_audio_text_matches.tsv",
         help="MIDI-audio matches file path for MMD"
-        "(default: data/MMD_METADATA/MMD_audio_text_matches.tsv)",
+        "(default: MMD_METADATA/MMD_audio_text_matches.tsv)",
     )
     args = parser.parse_args()
 
