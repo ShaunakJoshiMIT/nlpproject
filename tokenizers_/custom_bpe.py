@@ -58,9 +58,12 @@ def parse_remi_token(tok: str) -> REMIToken:
 
 def should_block(pair) -> bool:
     """
-    Very simple rule:
+    Rules:
     - Block merges that involve a Bar token.
-    - Allow everything else.
+    - Block merges that involve a special token.
+    - Block Position+Position and Duration+Duration.
+    - Block merges between time and non-time tokens.
+    - Block merges between notes whose pitch interval is too large.
     """
 
     # Convert raw byte tokens → string → REMI tokens
@@ -71,18 +74,30 @@ def should_block(pair) -> bool:
     if tok1.kind == "Bar" or tok2.kind == "Bar":
         return True
 
+    # RULE 2: never merge specials (<BOS>, <EOS>, <PAD>, etc.)
     if tok1.is_special or tok2.is_special:
         return True
 
+    # RULE 3: avoid Position+Position and Duration+Duration
     if tok1.kind == "Position" and tok2.kind == "Position":
         return True
     if tok1.is_duration and tok2.is_duration:
         return True
 
-
+    # RULE 4: don't merge time with non-time (keep scaffold clean)
     if tok1.is_time() != tok2.is_time():
-    # one is time, the other is not
+        # one is time, the other is not
         return True
+
+    # RULE 5: block merges between notes with large pitch intervals
+    # (e.g. bigger than a perfect fifth = 7 semitones)
+    if tok1.is_note and tok2.is_note:
+        p1 = tok1.midi_pitch
+        p2 = tok2.midi_pitch
+        if p1 is not None and p2 is not None:
+            interval = abs(p1 - p2)
+            if interval > 7:   # block big jumps (e.g. > perfect fifth)
+                return True
 
     # Otherwise allow
     return False

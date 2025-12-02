@@ -408,6 +408,10 @@ def data_augmentation_tokens_pm(
 
 
 if __name__ == "__main__":
+    print("Tokenizing datasets... with BPE and data augmentation where needed.")
+    print("Blocking rules: merging involving Bar tokens are blocked.")
+    print("Blocking rules: merging involving special tokens are blocked.")
+    print("Blocking rules: merging involving position tokens are blocked.")
     from miditok.data_augmentation import data_augmentation_dataset
 
     from dataset import list_mmd_files_paths, list_mmd_files_paths_short
