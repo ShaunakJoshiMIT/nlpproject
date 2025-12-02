@@ -4,38 +4,13 @@ Skeleton subclass to override MidiTok BPE training and filter merges.
 Swap the base class import to the tokenizer you use (REMI, TSD, etc.).
 Implement `should_block` with your own merge-filtering logic.
 """
-from typing import Iterable, List, Optional, Tuple
+from typing import Iterable, Optional, Tuple
 
-from miditok import REMI 
+from miditok import REMI
 from tokenizers.models import BPE
 
 
-BAR_PREFIX = "Bar_"
-
-
-def _decode_token(tok: str | bytes) -> str:
-    """Normalize a BPE token (bytes or str) to a Python string."""
-    return tok.decode("utf-8") if isinstance(tok, bytes) else tok
-
-
-def is_bar_token(tok: str | bytes) -> bool:
-    """Return True if the token represents a Bar token (e.g., 'Bar_0')."""
-    s = _decode_token(tok)
-    return s.startswith(BAR_PREFIX)
-
-
-def should_block(pair: Tuple[str | bytes, str | bytes]) -> bool:
-    """
-    Return True to prevent a given merge (pair of tokens) from being added.
-
-    Rule: do not merge across bar boundaries, i.e. block any merge where
-    either side is a Bar_* token. This keeps bar boundaries explicit and
-    forces BPE to learn patterns within bars rather than spanning bars.
-    """
-    a, b = pair
-    if is_bar_token(a) or is_bar_token(b):
-        return True
-    return False
+BAR_TOKEN_ID = 5  # Bar_None always occupies index 5 in this project setup.
 
 
 class REMIWithRules(REMI):
@@ -78,6 +53,9 @@ class REMIWithRules(REMI):
         else:
             raise AttributeError("Parent tokenizer exposes neither train nor learn_bpe")
 
+        def _sym_to_str(sym: str | bytes) -> str:
+            return sym.decode("utf-8") if isinstance(sym, bytes) else sym
+
         # Only adjust BPE models.
         # Newer MidiTok (v3+): uses _model.model (HF tokenizers)
         if getattr(self, "_model", None) is not None and hasattr(self._model, "model"):
@@ -86,7 +64,14 @@ class REMIWithRules(REMI):
             merges = list(getattr(self._model.model, "get_merges", lambda: [])())
             if not merges:
                 return
-            filtered = [pair for pair in merges if not should_block(tuple(pair))]
+            vocab_lookup = self._model.get_vocab()
+
+            def _is_bar_symbol(sym: str | bytes) -> bool:
+                return vocab_lookup.get(_sym_to_str(sym)) == BAR_TOKEN_ID
+
+            filtered = [
+                pair for pair in merges if not (_is_bar_symbol(pair[0]) or _is_bar_symbol(pair[1]))
+            ]
             if len(filtered) == len(merges):
                 return  # nothing to filter
 
@@ -112,7 +97,16 @@ class REMIWithRules(REMI):
             merges = list(getattr(self.bpe_obj, "merges", []))
             if not merges:
                 return
-            filtered = [pair for pair in merges if not should_block(tuple(pair))]
+            vocab_lookup = getattr(self.bpe_obj, "vocab", None)
+            if not isinstance(vocab_lookup, dict):
+                vocab_lookup = getattr(self, "vocab", {})
+
+            def _is_bar_symbol(sym: str | bytes) -> bool:
+                return vocab_lookup.get(_sym_to_str(sym)) == BAR_TOKEN_ID
+
+            filtered = [
+                pair for pair in merges if not (_is_bar_symbol(pair[0]) or _is_bar_symbol(pair[1]))
+            ]
             if len(filtered) == len(merges):
                 return
             # Update ranks in-place
