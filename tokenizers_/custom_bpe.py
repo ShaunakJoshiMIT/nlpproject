@@ -39,6 +39,7 @@ class REMIWithRules(REMI):
         Train then filter BPE merges. Falls back to standard training for non-BPE.
         """
         # MidiTok version compatibility: prefer `train`, fallback to `learn_bpe`.
+        print("[REMIWithRules] Starting training with merge filtering")
         parent_train = getattr(super(), "train", None)
         parent_learn_bpe = getattr(super(), "learn_bpe", None)
         if callable(parent_train):
@@ -65,9 +66,11 @@ class REMIWithRules(REMI):
         if getattr(self, "_model", None) is not None and hasattr(self._model, "model"):
             if getattr(self._model.model, "type", None) != "BPE":
                 return
+            print("[REMIWithRules] Filtering BPE merges after training")
             merges = list(getattr(self._model.model, "get_merges", lambda: [])())
             if not merges:
                 return
+            print(f"[REMIWithRules] Filtering {len(merges)} merges (first 5: {merges[:5]})")
             filtered = [pair for pair in merges if not should_block(tuple(pair))]
             if len(filtered) == len(merges):
                 return  # nothing to filter
@@ -91,9 +94,15 @@ class REMIWithRules(REMI):
 
         # Older MidiTok (v2.x): uses bpe_obj with bpe_ranks
         if hasattr(self, "bpe_obj") and hasattr(self.bpe_obj, "bpe_ranks"):
+            print("[REMIWithRules] Filtering BPE merges after training")
             merges = list(getattr(self.bpe_obj, "merges", []))
+            # Some MidiTok versions only expose ranks, not merges
+
+            if len(merges) == 0 and hasattr(self.bpe_obj, "bpe_ranks"):
+                merges = list(self.bpe_obj.bpe_ranks.keys())
             if not merges:
                 return
+            print(f"[REMIWithRules] Filtering {len(merges)} merges (first 5: {merges[:5]})")
             filtered = [pair for pair in merges if not should_block(tuple(pair))]
             if len(filtered) == len(merges):
                 return
