@@ -1,129 +1,111 @@
 """
-Skeleton subclass to override MidiTok BPE training and filter merges.
+REMI tokenizer subclass that prevents Bar tokens from being merged during BPE training.
 
-Swap the base class import to the tokenizer you use (REMI, TSD, etc.).
-Implement `should_block` with your own merge-filtering logic.
+By adding "Bar" to the special_tokens list before BPE training, the BpeTrainer will
+treat Bar_None as a special token that cannot be merged with other tokens.
 """
-from typing import Iterable, Optional, Tuple
+from typing import Iterable, List, Optional, Union
+from pathlib import Path
 
 from miditok import REMI
-from tokenizers.models import BPE
-
-
-BAR_TOKEN_ID = 5  # Bar_None always occupies index 5 in this project setup.
 
 
 class REMIWithRules(REMI):
     """
-    Filters learned BPE merges after MidiTok training.
-    If you call `learn_bpe` (deprecated alias) or `train`, the filtered merge list
-    replaces the underlying tokenizer model before use.
+    REMI tokenizer that blocks Bar tokens from BPE merges.
+    
+    This is achieved by temporarily adding "Bar" to the special_tokens list
+    during BPE training, which prevents Bar_None from being merged.
     """
 
+    def learn_bpe(
+        self,
+        vocab_size: int,
+        iterator: Iterable = None,
+        tokens_paths: List[Union[Path, str]] = None,
+        start_from_empty_voc: bool = False,
+        **kwargs,
+    ) -> None:
+        """
+        Learn BPE while blocking Bar tokens from being merged.
+        
+        Adds "Bar" to special_tokens temporarily so that Bar_None cannot
+        participate in any BPE merges.
+        """
+        # Store original special tokens
+        original_special_tokens = self.special_tokens.copy()
+        
+        # Check if Bar is already in special tokens
+        bar_already_special = "Bar" in self.special_tokens
+        
+        # Add Bar to special tokens if not already there
+        if not bar_already_special:
+            self.special_tokens.append("Bar")
+            print(f"[REMIWithRules] Added 'Bar' to special_tokens: {self.special_tokens}")
+        else:
+            print(f"[REMIWithRules] 'Bar' already in special_tokens: {self.special_tokens}")
+        
+        # Debug: Show what tokens will be protected
+        bar_token_name = "Bar_None"
+        if hasattr(self, '_vocab_base') and bar_token_name in self._vocab_base:
+            bar_id = self._vocab_base[bar_token_name]
+            print(f"[REMIWithRules] Bar_None has vocab ID: {bar_id}")
+        
+        print(f"[REMIWithRules] Starting BPE training with Bar tokens protected...")
+        
+        try:
+            # Call parent's learn_bpe - Bar tokens will be treated as special
+            super().learn_bpe(
+                vocab_size=vocab_size,
+                iterator=iterator,
+                tokens_paths=tokens_paths,
+                start_from_empty_voc=start_from_empty_voc,
+                **kwargs,
+            )
+            print(f"[REMIWithRules] BPE training completed successfully")
+            
+            # Verify Bar tokens weren't merged by checking vocab
+            if hasattr(self, 'vocab_bpe'):
+                bar_in_bpe = [tok for tok in self.vocab_bpe.keys() if 'Bar' in str(tok)]
+                print(f"[REMIWithRules] BPE tokens containing 'Bar': {len(bar_in_bpe)}")
+                if bar_in_bpe:
+                    print(f"[REMIWithRules] Sample Bar BPE tokens: {list(bar_in_bpe)[:5]}")
+            
+        finally:
+            # Restore original special tokens
+            self.special_tokens = original_special_tokens
+            print(f"[REMIWithRules] Restored original special_tokens: {self.special_tokens}")
+
+    # Also override train() in case it's called instead of learn_bpe
     def train(
         self,
         vocab_size: int,
-        model: str | None = "BPE",
+        model: str = "BPE",
         iterator: Optional[Iterable] = None,
         files_paths: Optional[Iterable] = None,
         **kwargs,
     ) -> None:
         """
-        Train then filter BPE merges. Falls back to standard training for non-BPE.
+        Train the tokenizer. For BPE, delegates to learn_bpe with Bar protection.
         """
-        # MidiTok version compatibility: prefer `train`, fallback to `learn_bpe`.
-        parent_train = getattr(super(), "train", None)
-        parent_learn_bpe = getattr(super(), "learn_bpe", None)
-        if callable(parent_train):
-            parent_train(
+        if model == "BPE":
+            # Use our overridden learn_bpe
+            self.learn_bpe(
                 vocab_size=vocab_size,
-                model=model,
                 iterator=iterator,
-                files_paths=files_paths,
-                **kwargs,
-            )
-        elif callable(parent_learn_bpe):
-            parent_learn_bpe(
-                vocab_size,
                 tokens_paths=files_paths,
-                model=model,
-                iterator=iterator,
                 **kwargs,
             )
         else:
-            raise AttributeError("Parent tokenizer exposes neither train nor learn_bpe")
-
-        def _sym_to_str(sym: str | bytes) -> str:
-            return sym.decode("utf-8") if isinstance(sym, bytes) else sym
-
-        # Only adjust BPE models.
-        # Newer MidiTok (v3+): uses _model.model (HF tokenizers)
-        if getattr(self, "_model", None) is not None and hasattr(self._model, "model"):
-            if getattr(self._model.model, "type", None) != "BPE":
-                return
-            merges = list(getattr(self._model.model, "get_merges", lambda: [])())
-            if not merges:
-                return
-            vocab_lookup = self._model.get_vocab()
-
-            def _is_bar_symbol(sym: str | bytes) -> bool:
-                return vocab_lookup.get(_sym_to_str(sym)) == BAR_TOKEN_ID
-
-            filtered = [
-                pair for pair in merges if not (_is_bar_symbol(pair[0]) or _is_bar_symbol(pair[1]))
-            ]
-            if len(filtered) == len(merges):
-                return  # nothing to filter
-
-            vocab = self._model.get_vocab()
-            cfg = self._model.model  # keep existing BPE settings
-            self._model.model = BPE(
-                vocab=vocab,
-                merges=filtered,
-                continuing_subword_prefix=cfg.continuing_subword_prefix,
-                end_of_word_suffix=cfg.end_of_word_suffix,
-                dropout=cfg.dropout,
-            )
-            # Refresh decoding helpers after swapping the model.
-            if hasattr(self, "_vocab_learned_bytes_to_tokens"):
-                self._vocab_learned_bytes_to_tokens = {}
-            # Private name in MidiTok v3
-            if hasattr(self, "_MusicTokenizer__create_vocab_learned_bytes_to_tokens"):
-                self._MusicTokenizer__create_vocab_learned_bytes_to_tokens()
-            return
-
-        # Older MidiTok (v2.x): uses bpe_obj with bpe_ranks
-        if hasattr(self, "bpe_obj") and hasattr(self.bpe_obj, "bpe_ranks"):
-            merges = list(getattr(self.bpe_obj, "merges", []))
-            if not merges:
-                return
-            vocab_lookup = getattr(self.bpe_obj, "vocab", None)
-            if not isinstance(vocab_lookup, dict):
-                vocab_lookup = getattr(self, "vocab", {})
-
-            def _is_bar_symbol(sym: str | bytes) -> bool:
-                return vocab_lookup.get(_sym_to_str(sym)) == BAR_TOKEN_ID
-
-            filtered = [
-                pair for pair in merges if not (_is_bar_symbol(pair[0]) or _is_bar_symbol(pair[1]))
-            ]
-            if len(filtered) == len(merges):
-                return
-            # Update ranks in-place
-            self.bpe_obj.bpe_ranks = {pair: i for i, pair in enumerate(filtered)}
-            # Keep merges attribute if present
-            try:
-                self.bpe_obj.merges = filtered
-            except Exception:
-                pass
-            return
-
-    # Optional: keep the old `learn_bpe` alias for code that still calls it.
-    def learn_bpe(
-        self,
-        vocab_size: int,
-        tokens_paths: Optional[Iterable[str]] = None,
-        **kwargs,
-    ) -> None:
-
-        return self.train(vocab_size, model="BPE", files_paths=tokens_paths, **kwargs)
+            # For non-BPE models, use parent's train if available
+            parent_train = getattr(super(), "train", None)
+            if callable(parent_train):
+                parent_train(
+                    vocab_size=vocab_size,
+                    model=model,
+                    iterator=iterator,
+                    files_paths=files_paths,
+                    **kwargs,
+                )
+            else:
+                raise AttributeError(f"Unsupported model type: {model}")
