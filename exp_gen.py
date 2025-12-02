@@ -8,8 +8,8 @@ from classes import Experiment, Baseline, ModelConfig, TrainingConfig, TestingCo
 from constants import *
 
 
-datasets = ['POP909-merged', 'GiantMIDI']
-tokenizations = ['TSD', 'REMI']
+datasets = ['GiantMIDI']
+tokenizations = ['TSD']
 bpe_factors = [0, 4, 10, 20, 50, 100]
 gen_model_conf = ModelConfig()
 cla_model_conf = ModelConfig(dim=CLA_DIM, nb_heads=CLA_NB_HEADS, d_ffwd=CLA_D_FFWD, nb_layers=CLA_NB_LAYERS,
