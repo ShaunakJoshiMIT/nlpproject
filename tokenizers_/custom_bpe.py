@@ -16,6 +16,7 @@ def should_block(pair: Tuple[str, str]) -> bool:
     Example: block merges that cross time tokens, or that start with a special byte.
     """
     # TODO: implement your rule
+    print(f"Checking merge pair: {pair}")
     return False
 
 
