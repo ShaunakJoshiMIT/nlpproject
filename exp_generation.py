@@ -47,6 +47,8 @@ class BaselineGen(Baseline):
         else:
             embed_pool_size = [self.embed_pooling_size for _ in range(len(self.tokenizer.len))]
             model = GPT2LMHeadModelEmbedPooling(self.model_config, self.tokenizer.len, embed_pool_size)
+        # Explicitly set max_length to None to avoid conflict with max_new_tokens
+        self.generation_config.max_length = None
         model.generation_config = self.generation_config
         return model
 
@@ -93,7 +95,7 @@ training_config = Seq2SeqTrainingArguments(
     ddp_find_unused_parameters=DDP_FIND_UNUSED_PARAMETERS,
     ddp_bucket_cap_mb=DDP_BUCKET_CAP_MB,
     gradient_checkpointing=False,
-    full_determinism=True,
+    full_determinism=False,
     use_mps_device=USE_MPS,
     torch_compile=TORCH_COMPILE,
     torch_compile_backend=TORCH_COMPILE_BACKEND,
