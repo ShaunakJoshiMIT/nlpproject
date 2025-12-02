@@ -16,6 +16,9 @@ import json
 from miditok.utils import merge_tracks_per_class
 from miditoolkit import MidiFile
 from transformers.trainer_utils import set_seed
+
+from tokenizers_.custom_bpe import REMIWithRules
+
 from tqdm import tqdm
 import numpy as np
 
@@ -462,6 +465,12 @@ if __name__ == "__main__":
                 tokens_path_no_bpe = exp.baselines[0].tokens_path
                 tokens_paths = list(tokens_path_no_bpe.glob("**/*.json"))
                 baseline.tokens_path.mkdir(exist_ok=True, parents=True)
+                if not isinstance(baseline.tokenizer, REMIWithRules):
+                    print(
+                        "Swapping tokenizer class to REMIWithRules to apply BPE merge filtering"
+                    )
+                    baseline.tokenizer.__class__ = REMIWithRules
+
                 baseline.tokenizer.learn_bpe(
                     baseline.tokenization_config.bpe_vocab_size,
                     tokens_paths=tokens_paths,
