@@ -30,7 +30,7 @@ TOKENIZER_PARAMS = {'pitch_range': PITCH_RANGE, 'beat_res': BEAT_RES, 'nb_veloci
 TIME_DIVISION = 384
 DATA_AUGMENTATION_OFFSETS = (2, 1, 0)
 BPE_VOCAB_SIZES = [1000, 5000]
-TOKENIZATIONS = ["TSD"]
+TOKENIZATIONS = ["REMI"]
 
 # Transformer config (for all models)
 DIM = 512
@@ -59,7 +59,7 @@ TORCH_COMPILE_MODE = None
 USE_GRADIENT_CHECKPOINTING = True
 DDP_FIND_UNUSED_PARAMETERS = False
 DDP_BUCKET_CAP_MB = None  # default to 25mb
-TRAINING_STEPS = 1000
+TRAINING_STEPS = 10
 VALID_INTVL = 1000
 LOG_STEPS_INTVL = 20
 SAVE_STEPS = 1000
@@ -75,6 +75,11 @@ LR_SCHEDULER_GEN = 'cosine_with_restarts'
 WARMUP_RATIO_GEN = 0.3
 VALID_SPLIT_GEN = 0.02
 TEST_SPLIT_GEN = 0.10
+
+# Optional caps to speed up generative experiments (None = no cap)
+# These limit how many token windows are used for train / eval / test.
+MAX_TRAIN_SAMPLES_GEN = 64   # e.g., up to 64 training windows
+MAX_EVAL_SAMPLES_GEN = 3     # e.g., up to 3 validation / test windows
 
 # TRAINING PARAMS PRETRAINING
 BATCH_SIZE_PT = BATCH_SIZE

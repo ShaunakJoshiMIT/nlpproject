@@ -9,7 +9,7 @@ from constants import *
 
 
 datasets = ['GiantMIDI']
-tokenizations = ['TSD']
+tokenizations = ['REMI']
 bpe_factors = [0, 4, 10, 20, 50, 100]
 gen_model_conf = ModelConfig()
 cla_model_conf = ModelConfig(dim=CLA_DIM, nb_heads=CLA_NB_HEADS, d_ffwd=CLA_D_FFWD, nb_layers=CLA_NB_LAYERS,

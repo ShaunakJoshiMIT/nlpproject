@@ -346,6 +346,15 @@ if __name__ == '__main__':
             dataset_train = baseline_.create_dataset(files_paths=paths_train)
             dataset_valid = baseline_.create_dataset(files_paths=paths_valid)
             dataset_test = baseline_.create_dataset(files_paths=paths_test)
+
+            # For quick architecture tests: optionally subsample datasets
+            # using caps defined in constants.py (MAX_TRAIN_SAMPLES_GEN, MAX_EVAL_SAMPLES_GEN).
+            if "MAX_TRAIN_SAMPLES_GEN" in globals() and MAX_TRAIN_SAMPLES_GEN is not None:
+                dataset_train.reduce_nb_samples(MAX_TRAIN_SAMPLES_GEN)
+            if "MAX_EVAL_SAMPLES_GEN" in globals() and MAX_EVAL_SAMPLES_GEN is not None:
+                dataset_valid.reduce_nb_samples(MAX_EVAL_SAMPLES_GEN)
+                dataset_test.reduce_nb_samples(MAX_EVAL_SAMPLES_GEN)
+
             collator = baseline_.create_data_collator()
             # Train model if not already done
             trainer = GenTrainer(
