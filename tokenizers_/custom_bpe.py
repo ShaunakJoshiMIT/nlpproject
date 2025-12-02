@@ -8,16 +8,72 @@ from typing import Iterable, List, Optional, Tuple
 
 from miditok import REMI  # replace with TSD/Octuple/etc. if needed
 from tokenizers.models import BPE
+import math
+import random
 
+class REMIToken:
+    def __init__(self, raw: str, kind: str, value: Optional[str]):
+        self.raw = raw
+        self.kind = kind
+        self.value = value
+
+    def is_time(self) -> bool:
+        # adjust to match your dialect
+        return self.kind in {"Bar", "Position", "Tempo", "TimeSig"}
+
+    @property
+    def is_note(self) -> bool:
+        return self.kind in {"Note-On", "Note-Off"}
+
+    @property
+    def is_duration(self) -> bool:
+        return self.kind == "Duration"
+
+    @property
+    def is_special(self) -> bool:
+        # e.g. <BOS>, <EOS>, <PAD>, etc.
+        return self.raw.startswith("<") and self.raw.endswith(">")
+
+    @property
+    def midi_pitch(self) -> Optional[int]:
+        if not self.is_note or self.value is None:
+            return None
+        try:
+            return int(self.value)
+        except ValueError:
+            return None
+
+    @property
+    def pitch_class(self) -> Optional[int]:
+        p = self.midi_pitch
+        return None if p is None else p % 12
+
+
+def parse_remi_token(tok: str) -> REMIToken:
+    if "_" in tok:
+        kind, value = tok.split("_", 1)
+    else:
+        kind, value = tok, None
+    return REMIToken(raw=tok, kind=kind, value=value)
 
 def should_block(pair: Tuple[str, str]) -> bool:
     """
-    Return True to prevent a given merge (pair of byte strings) from being added.
-    Example: block merges that cross time tokens, or that start with a special byte.
+    Very simple rule:
+    - Block merges that involve a Bar token.
+    - Allow everything else.
     """
-    # TODO: implement your rule
-    print(f"Checking merge pair: {pair}")
+
+    # Convert raw byte tokens → string → REMI tokens
+    tok1 = parse_remi_token(pair[0].decode("utf-8", errors="ignore"))
+    tok2 = parse_remi_token(pair[1].decode("utf-8", errors="ignore"))
+
+    # RULE 1: never merge Bar with anything
+    if tok1.kind == "Bar" or tok2.kind == "Bar":
+        return True
+
+    # Otherwise allow
     return False
+
 
 
 class REMIWithRules(REMI):
