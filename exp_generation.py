@@ -125,25 +125,95 @@ datasets = ["Maestro"]
 experiments = []
 for dataset in datasets:
     for tokenization in TOKENIZATIONS:
+        # Standard REMI baselines: noBPE, BPE-1000, BPE-5000
         exp_name = f'gen_{dataset}_{tokenization}'
-        baselines = []
+        baselines: List[BaselineGen] = []
 
         # noBPE baseline (will be trained and tested for comparison)
         data_conf_, test_conf_, model_conf_, train_conf_, gen_conf_ = \
             map(deepcopy, [data_config, test_config, model_config, training_config, generation_config])
         tok_config = TokenizationConfig(tokenization, deepcopy(TOKENIZER_PARAMS))
-        baselines.append(BaselineGen(f"{tokenization}_noBPE", exp_name, dataset, SEED, tok_config,
-                                     model_conf_, train_conf_, data_conf_, test_conf_, gen_conf_))
+        baselines.append(
+            BaselineGen(
+                f"{tokenization}_noBPE",
+                exp_name,
+                dataset,
+                SEED,
+                tok_config,
+                model_conf_,
+                train_conf_,
+                data_conf_,
+                test_conf_,
+                gen_conf_,
+            )
+        )
 
         # BPE baselines (vocab sizes 1000, 5000) - these will be trained and tested
         for bpe_vocab_size in BPE_VOCAB_SIZES:
             data_conf_, test_conf_, model_conf_, train_conf_, gen_conf_ = \
                 map(deepcopy, [data_config, test_config, model_config, training_config, generation_config])
             tok_config = TokenizationConfig(tokenization, deepcopy(TOKENIZER_PARAMS), bpe_vocab_size)
-            baselines.append(BaselineGen(f"{tokenization}_bpe{bpe_vocab_size}", exp_name, dataset, SEED, tok_config,
-                                         model_conf_, train_conf_, data_conf_, test_conf_, gen_conf_))
+            baselines.append(
+                BaselineGen(
+                    f"{tokenization}_bpe{bpe_vocab_size}",
+                    exp_name,
+                    dataset,
+                    SEED,
+                    tok_config,
+                    model_conf_,
+                    train_conf_,
+                    data_conf_,
+                    test_conf_,
+                    gen_conf_,
+                )
+            )
 
         experiments.append(Experiment(exp_name, baselines, dataset))
+
+        # REMIWithRules baselines: noBPE, BPE-1000 and BPE-5000
+        if tokenization == "REMI":
+            exp_name_rules = f'gen_{dataset}_REMIWithRules'
+            baselines_rules: List[BaselineGen] = []
+
+            # REMIWithRules noBPE baseline
+            data_conf_r, test_conf_r, model_conf_r, train_conf_r, gen_conf_r = \
+                map(deepcopy, [data_config, test_config, model_config, training_config, generation_config])
+            tok_config_rules_nb = TokenizationConfig("REMIWithRules", deepcopy(TOKENIZER_PARAMS))
+            baselines_rules.append(
+                BaselineGen(
+                    "REMIWithRules_noBPE",
+                    exp_name_rules,
+                    dataset,
+                    SEED,
+                    tok_config_rules_nb,
+                    model_conf_r,
+                    train_conf_r,
+                    data_conf_r,
+                    test_conf_r,
+                    gen_conf_r,
+                )
+            )
+
+            # REMIWithRules BPE baselines (1000, 5000)
+            for bpe_vocab_size in BPE_VOCAB_SIZES:
+                data_conf_r, test_conf_r, model_conf_r, train_conf_r, gen_conf_r = \
+                    map(deepcopy, [data_config, test_config, model_config, training_config, generation_config])
+                tok_config_rules = TokenizationConfig("REMIWithRules", deepcopy(TOKENIZER_PARAMS), bpe_vocab_size)
+                baselines_rules.append(
+                    BaselineGen(
+                        f"REMIWithRules_bpe{bpe_vocab_size}",
+                        exp_name_rules,
+                        dataset,
+                        SEED,
+                        tok_config_rules,
+                        model_conf_r,
+                        train_conf_r,
+                        data_conf_r,
+                        test_conf_r,
+                        gen_conf_r,
+                    )
+                )
+            experiments.append(Experiment(exp_name_rules, baselines_rules, dataset))
 
 
 def save_generation_tokens(prompt: Tensor, continuation: Tensor, tokenizer, out_dir: Path, file_name: Union[int, str]):

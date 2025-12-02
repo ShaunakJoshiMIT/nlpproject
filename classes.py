@@ -51,7 +51,18 @@ class Baseline(ABC):
     embed_pooling_size: int = None  # as cannot be in BERTConfig / GPT2Config
 
     def __post_init__(self):
-        tokens_path_dir_name = f"{self.dataset}_{self.tokenization}"
+        # Share the same base (no-BPE) dataset between REMI and REMIWithRules.
+        # REMIWithRules only changes BPE merge filtering; its underlying REMI
+        # tokenization without BPE is identical, so we reuse the plain REMI
+        # token directory when no BPE is requested.
+        base_tokenization = self.tokenization
+        if (
+            self.tokenization == "REMIWithRules"
+            and self.tokenization_config.bpe_vocab_size is None
+        ):
+            base_tokenization = "REMI"
+
+        tokens_path_dir_name = f"{self.dataset}_{base_tokenization}"
         if self.tokenization_config.bpe_vocab_size is not None:
             tokens_path_dir_name += f"_bpe{self.tokenization_config.bpe_vocab_size}"
         self.tokens_path = Path("data", tokens_path_dir_name)

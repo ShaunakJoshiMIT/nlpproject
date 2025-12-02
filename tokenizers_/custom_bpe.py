@@ -6,16 +6,35 @@ Implement `should_block` with your own merge-filtering logic.
 """
 from typing import Iterable, List, Optional, Tuple
 
-from miditok import REMI  # replace with TSD/Octuple/etc. if needed
+from miditok import REMI 
 from tokenizers.models import BPE
 
 
-def should_block(pair: Tuple[str, str]) -> bool:
+BAR_PREFIX = "Bar_"
+
+
+def _decode_token(tok: str | bytes) -> str:
+    """Normalize a BPE token (bytes or str) to a Python string."""
+    return tok.decode("utf-8") if isinstance(tok, bytes) else tok
+
+
+def is_bar_token(tok: str | bytes) -> bool:
+    """Return True if the token represents a Bar token (e.g., 'Bar_0')."""
+    s = _decode_token(tok)
+    return s.startswith(BAR_PREFIX)
+
+
+def should_block(pair: Tuple[str | bytes, str | bytes]) -> bool:
     """
-    Return True to prevent a given merge (pair of byte strings) from being added.
-    Example: block merges that cross time tokens, or that start with a special byte.
+    Return True to prevent a given merge (pair of tokens) from being added.
+
+    Rule: do not merge across bar boundaries, i.e. block any merge where
+    either side is a Bar_* token. This keeps bar boundaries explicit and
+    forces BPE to learn patterns within bars rather than spanning bars.
     """
-    # TODO: implement your rule
+    a, b = pair
+    if is_bar_token(a) or is_bar_token(b):
+        return True
     return False
 
 
