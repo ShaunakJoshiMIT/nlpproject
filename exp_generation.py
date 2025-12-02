@@ -269,11 +269,11 @@ class ComputeMetrics:
 
         tse_ = np.array(tse_)
         metric_res = {
-            "tse_type": float(np.mean(tse_[:, 0])),
-            "tse_time": float(np.mean(tse_[:, 1])),
-            "tse_ndup": float(np.mean(tse_[:, 2])),
-            "tse_nnon": float(np.mean(tse_[:, 3])),
-            "tse_nnof": float(np.mean(tse_[:, 4])),
+            "tse_type": round(float(np.mean(tse_[:, 0])), 10),
+            "tse_time": round(float(np.mean(tse_[:, 1])), 10),
+            "tse_ndup": round(float(np.mean(tse_[:, 2])), 10),
+            "tse_nnon": round(float(np.mean(tse_[:, 3])), 10),
+            "tse_nnof": round(float(np.mean(tse_[:, 4])), 10),
         }
 
         return metric_res

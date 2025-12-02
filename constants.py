@@ -78,8 +78,8 @@ TEST_SPLIT_GEN = 0.10
 
 # Optional caps to speed up generative experiments (None = no cap)
 # These limit how many token windows are used for train / eval / test.
-MAX_TRAIN_SAMPLES_GEN = 64   # e.g., up to 64 training windows
-MAX_EVAL_SAMPLES_GEN = 3     # e.g., up to 3 validation / test windows
+MAX_TRAIN_SAMPLES_GEN = 1000  # 1000 training iterations
+MAX_EVAL_SAMPLES_GEN = None   # No limit - use full test set
 
 # TRAINING PARAMS PRETRAINING
 BATCH_SIZE_PT = BATCH_SIZE
