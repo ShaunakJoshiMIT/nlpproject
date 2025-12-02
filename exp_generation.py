@@ -373,15 +373,23 @@ if __name__ == '__main__':
 
     for exp_ in experiments:
 
-        # Split data here, so that we use the exact same test files for all baselines
-        # Doing so allows fair human evaluation of the same conditional / prompted generation
-        # We assume they have the same data_config
+        # Split data here, so that we use the exact same train / valid / test
+        # files for all baselines of a given experiment.
         set_seed(exp_.baselines[0].seed)
-        files_names = [p.relative_to(exp_.baselines[0].tokens_path)
-                       for p in exp_.baselines[0].tokens_path.glob('**/*.json')]
-        names_train, names_valid, names_test = split_object(files_names, [exp_.baselines[0].data_config.valid_ratio,
-                                                                          exp_.baselines[0].data_config.test_ratio])
+        files_names = [
+            p.relative_to(exp_.baselines[0].tokens_path)
+            for p in exp_.baselines[0].tokens_path.glob("**/*.json")
+        ]
+        names_train, names_valid, names_test = split_object(
+            files_names,
+            [
+                exp_.baselines[0].data_config.valid_ratio,
+                exp_.baselines[0].data_config.test_ratio,
+            ],
+        )
 
+        # Train and evaluate every baseline (e.g., REMI + REMIWithRules variants)
+        # and rely on Trainer / ComputeMetrics to log loss, runtime and TSE.
         for baseline_ in exp_.baselines:
             if is_testing_done(baseline_.run_path):
                 continue
@@ -471,66 +479,66 @@ if __name__ == '__main__':
 
         # Generate examples for human evaluation
         # Gather tokens
-        gen_dir = exp_.run_path / "gen"
-        if (gen_dir / "all_tokens.json").is_file():
-            continue
-        gen_dir.mkdir(parents=True, exist_ok=True)
-        set_seed(exp_.baselines[0].seed)
-        device = select_device(not exp_.baselines[0].training_config.no_cuda,
-                               exp_.baselines[0].training_config.use_mps_device)
-        test_midi_paths = [exp_.data_path_midi / name.with_suffix(".mid") for name in names_test]
-        tokens = {baseline_.name: [] for baseline_ in exp_.baselines}
-        gen_tokens = {baseline_.name: [] for baseline_ in exp_.baselines}
-        checkpoints = {baseline_.name: get_last_checkpoint(str(baseline_.run_path)) for baseline_ in exp_.baselines}
-        for midi_path in tqdm(test_midi_paths, desc=f"Loading examples for human evals ({exp_.name})"):
-            if "§" in midi_path.name:  # augmented tokens json, midi does exist
-                continue
-            midi_prompt = MidiFile(midi_path)
-            max_tick = NB_BEATS_PROMPT_GEN * midi_prompt.ticks_per_beat
-            midi_prompt.instruments[0].notes = [n for n in midi_prompt.instruments[0].notes if n.start <= max_tick]
-            if len(midi_prompt.instruments[0].notes) < MIN_NB_NOTES_PROMPT_GEN:
-                continue
+        # gen_dir = exp_.run_path / "gen"
+        # if (gen_dir / "all_tokens.json").is_file():
+        #     continue
+        # gen_dir.mkdir(parents=True, exist_ok=True)
+        # set_seed(exp_.baselines[0].seed)
+        # device = select_device(not exp_.baselines[0].training_config.no_cuda,
+        #                        exp_.baselines[0].training_config.use_mps_device)
+        # test_midi_paths = [exp_.data_path_midi / name.with_suffix(".mid") for name in names_test]
+        # tokens = {baseline_.name: [] for baseline_ in exp_.baselines}
+        # gen_tokens = {baseline_.name: [] for baseline_ in exp_.baselines}
+        # checkpoints = {baseline_.name: get_last_checkpoint(str(baseline_.run_path)) for baseline_ in exp_.baselines}
+        # for midi_path in tqdm(test_midi_paths, desc=f"Loading examples for human evals ({exp_.name})"):
+        #     if "§" in midi_path.name:  # augmented tokens json, midi does exist
+        #         continue
+        #     midi_prompt = MidiFile(midi_path)
+        #     max_tick = NB_BEATS_PROMPT_GEN * midi_prompt.ticks_per_beat
+        #     midi_prompt.instruments[0].notes = [n for n in midi_prompt.instruments[0].notes if n.start <= max_tick]
+        #     if len(midi_prompt.instruments[0].notes) < MIN_NB_NOTES_PROMPT_GEN:
+        #         continue
 
-            # Create batches for each baseline
-            for baseline_ in exp_.baselines:
-                tokens[baseline_.name].append(
-                    {"input_ids": LongTensor(baseline_.tokenizer(midi_prompt)[0].ids)}
-                )
+        #     # Create batches for each baseline
+        #     for baseline_ in exp_.baselines:
+        #         tokens[baseline_.name].append(
+        #             {"input_ids": LongTensor(baseline_.tokenizer(midi_prompt)[0].ids)}
+        #         )
 
-        # Generates tokens
-        for baseline_ in tqdm(exp_.baselines, desc=f"Generating examples for human evals ({exp_.name})"):
-            model_ = baseline_.create_model()
-            kwargs = {}
-            if baseline_.tokenizer.is_multi_voc:
-                embed_pool_size = [baseline_.embed_pooling_size for _ in range(len(baseline_.tokenizer.len))]
-                kwargs = {"num_classes": baseline_.tokenizer.len, "embed_sizes": embed_pool_size}
-            model_ = model_.from_pretrained(checkpoints[baseline_.name], **kwargs).eval().to(device)
+        # # Generates tokens
+        # for baseline_ in tqdm(exp_.baselines, desc=f"Generating examples for human evals ({exp_.name})"):
+        #     model_ = baseline_.create_model()
+        #     kwargs = {}
+        #     if baseline_.tokenizer.is_multi_voc:
+        #         embed_pool_size = [baseline_.embed_pooling_size for _ in range(len(baseline_.tokenizer.len))]
+        #         kwargs = {"num_classes": baseline_.tokenizer.len, "embed_sizes": embed_pool_size}
+        #     model_ = model_.from_pretrained(checkpoints[baseline_.name], **kwargs).eval().to(device)
 
-            for i in range(0, len(tokens[baseline_.name]), BATCH_SIZE_TEST_GEN):
-                input_ids = tokens[baseline_.name][i: i + BATCH_SIZE_TEST_GEN]
-                _add_bos_eos_tokens_to_batch(input_ids, bos_tok=baseline_.bos_token)
-                input_ids = _pad_batch(input_ids, baseline_.pad_token, pad_on_left=True).to(device)
-                if baseline_.tokenizer.is_multi_voc:
-                    attention_mask = (input_ids[..., 0] != baseline_.pad_token).int()
-                else:
-                    attention_mask = (input_ids != baseline_.pad_token).int()
-                generated_tokens = model_.generate(input_ids, baseline_.generation_config,
-                                                   attention_mask=attention_mask)  # (N,T)
-                gen_tokens[baseline_.name] += generated_tokens.tolist()
+        #     for i in range(0, len(tokens[baseline_.name]), BATCH_SIZE_TEST_GEN):
+        #         input_ids = tokens[baseline_.name][i: i + BATCH_SIZE_TEST_GEN]
+        #         _add_bos_eos_tokens_to_batch(input_ids, bos_tok=baseline_.bos_token)
+        #         input_ids = _pad_batch(input_ids, baseline_.pad_token, pad_on_left=True).to(device)
+        #         if baseline_.tokenizer.is_multi_voc:
+        #             attention_mask = (input_ids[..., 0] != baseline_.pad_token).int()
+        #         else:
+        #             attention_mask = (input_ids != baseline_.pad_token).int()
+        #         generated_tokens = model_.generate(input_ids, baseline_.generation_config,
+        #                                            attention_mask=attention_mask)  # (N,T)
+        #         gen_tokens[baseline_.name] += generated_tokens.tolist()
 
-        # Saves generated tokens as MIDIs
-        max_tick = (NB_BEATS_CONTINUATION_MAX + NB_BEATS_PROMPT_GEN) * TIME_DIVISION
-        with open(gen_dir / "all_tokens.json", "w") as outfile:
-            json.dump(gen_tokens, outfile)
-        for i in range(len(gen_tokens[exp_.baselines[0].name])):
-            midi_out = MidiFile(ticks_per_beat=TIME_DIVISION)
-            midi_out.markers.append(Marker("Continuation starts ~ here", NB_BEATS_PROMPT_GEN * TIME_DIVISION))
-            for baseline_ in exp_.baselines:
-                toks = gen_tokens[baseline_.name][i]
-                if not baseline_.tokenizer.unique_track:
-                    toks = [toks]
-                midi_conv = baseline_.tokenizer(toks, time_division=TIME_DIVISION)
-                # Discard notes after the max nb beats of continuation
-                midi_conv.instruments[0].notes = [n for n in midi_conv.instruments[0].notes if n.start < max_tick]
-                midi_out.instruments.append(midi_conv.instruments[0])
-            midi_out.dump(gen_dir / f"{i}.mid")
+        # # Saves generated tokens as MIDIs
+        # max_tick = (NB_BEATS_CONTINUATION_MAX + NB_BEATS_PROMPT_GEN) * TIME_DIVISION
+        # with open(gen_dir / "all_tokens.json", "w") as outfile:
+        #     json.dump(gen_tokens, outfile)
+        # for i in range(len(gen_tokens[exp_.baselines[0].name])):
+        #     midi_out = MidiFile(ticks_per_beat=TIME_DIVISION)
+        #     midi_out.markers.append(Marker("Continuation starts ~ here", NB_BEATS_PROMPT_GEN * TIME_DIVISION))
+        #     for baseline_ in exp_.baselines:
+        #         toks = gen_tokens[baseline_.name][i]
+        #         if not baseline_.tokenizer.unique_track:
+        #             toks = [toks]
+        #         midi_conv = baseline_.tokenizer(toks, time_division=TIME_DIVISION)
+        #         # Discard notes after the max nb beats of continuation
+        #         midi_conv.instruments[0].notes = [n for n in midi_conv.instruments[0].notes if n.start < max_tick]
+        #         midi_out.instruments.append(midi_conv.instruments[0])
+        #     midi_out.dump(gen_dir / f"{i}.mid")
