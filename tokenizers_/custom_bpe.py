@@ -56,7 +56,7 @@ def parse_remi_token(tok: str) -> REMIToken:
         kind, value = tok, None
     return REMIToken(raw=tok, kind=kind, value=value)
 
-def should_block(pair: Tuple[str, str]) -> bool:
+def should_block(pair) -> bool:
     """
     Very simple rule:
     - Block merges that involve a Bar token.
@@ -69,6 +69,19 @@ def should_block(pair: Tuple[str, str]) -> bool:
 
     # RULE 1: never merge Bar with anything
     if tok1.kind == "Bar" or tok2.kind == "Bar":
+        return True
+
+    if tok1.is_special or tok2.is_special:
+        return True
+
+    if tok1.kind == "Position" and tok2.kind == "Position":
+        return True
+    if tok1.is_duration and tok2.is_duration:
+        return True
+
+
+    if tok1.is_time() != tok2.is_time():
+    # one is time, the other is not
         return True
 
     # Otherwise allow
