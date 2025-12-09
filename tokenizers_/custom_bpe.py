@@ -34,6 +34,51 @@ class CustomBPEBase(REMI):
     # Maximum allowed velocity difference
     MAX_VELOCITY_DIFF = 30
     
+    @property
+    def bpe_slow(self) -> bool:
+        """
+        Override to return False so miditok doesn't try to use its 
+        slow BPE decode which expects 'BPE_' prefix format.
+        Our custom decode_bpe handles the space-concatenated format.
+        """
+        return False
+    
+    def __len__(self) -> int:
+        """
+        Return vocabulary size from _vocab_base.
+        
+        Override because parent's __len__ tries to use _bpe_model.get_vocab()
+        when has_bpe=True, but we don't have a _bpe_model (we use slow BPE).
+        """
+        return len(self._vocab_base)
+    
+    def complete_sequence(self, seq):
+        """
+        Complete a TokSequence by filling ids/tokens from each other.
+        
+        Override to skip bytes conversion which requires _vocab_base_id_to_byte
+        that's only populated for fast BPE. Our slow BPE doesn't use bytes.
+        """
+        from miditok import TokSequence
+        
+        if not isinstance(seq, TokSequence):
+            return
+            
+        # Fill tokens from ids if missing
+        if seq.tokens is None and seq.ids is not None:
+            seq.tokens = [self[id_] for id_ in seq.ids]
+        # Fill ids from tokens if missing
+        elif seq.ids is None and seq.tokens is not None:
+            seq.ids = [self._vocab_base[tok] for tok in seq.tokens]
+        
+        # Skip bytes conversion - we don't use byte-level encoding
+        seq.bytes = None
+        
+        # Set events if they exist (REMI/MIDI-like)
+        if seq.events is None and seq.tokens is not None:
+            # Events would be parsed from tokens - leave as None for simplicity
+            pass
+    
     def should_merge(self, token1: str, token2: str) -> bool:
         """
         Override in subclasses to implement custom merge rules.
@@ -145,11 +190,12 @@ class CustomBPEBase(REMI):
                 self.decode_bpe(s)
             return
         
-        # Skip if not BPE encoded
+        # Skip if no BPE vocab learned
         if not self.has_bpe:
             return
-        if isinstance(seq, TokSequence) and not seq.ids_bpe_encoded:
-            return
+        
+        # NOTE: Don't check ids_bpe_encoded flag - generated sequences from model
+        # won't have this flag set, but they can still contain BPE token IDs
         
         decoded_ids = []
         for id_ in seq.ids:
