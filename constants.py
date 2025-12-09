@@ -29,8 +29,23 @@ TOKENIZER_PARAMS = {'pitch_range': PITCH_RANGE, 'beat_res': BEAT_RES, 'nb_veloci
                     'additional_tokens': ADDITIONAL_TOKENS, "special_tokens": SPECIAL_TOKENS}
 TIME_DIVISION = 384
 DATA_AUGMENTATION_OFFSETS = (2, 1, 0)
-BPE_VOCAB_SIZES = [1000, 5000]
-TOKENIZATIONS = ["REMI"]
+BPE_VOCAB_SIZES = [500]
+
+# Tokenization configuration
+# Format: {name: base_tokenization}
+# - If base_tokenization is None, it's a primary tokenization (creates its own noBPE tokens)
+# - If base_tokenization is set, it reuses that tokenization's noBPE tokens
+# NOTE: Primary tokenizations must be listed BEFORE their variants
+TOKENIZATIONS_CONFIG = {
+    "REMI": None,                    # Primary - creates its own noBPE
+    "RhythmBPE": "REMI",             # Blocks Bar token merges (rhythm preservation)
+    "HarmonicBPE": "REMI",           # Only harmonically valid pitch intervals
+    "VelocityBPE": "REMI",           # Only small velocity differences
+    "CombinedBPE": "REMI",           # All three rules combined
+}
+
+# List of all tokenizations (for iteration)
+TOKENIZATIONS = list(TOKENIZATIONS_CONFIG.keys())
 
 # Transformer config (for all models)
 DIM = 512

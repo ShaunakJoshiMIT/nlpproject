@@ -9,6 +9,7 @@ import miditok
 
 from dataset import DatasetABC
 import tokenizers_
+from constants import TOKENIZATIONS_CONFIG
 
 
 @dataclass
@@ -51,16 +52,15 @@ class Baseline(ABC):
     embed_pooling_size: int = None  # as cannot be in BERTConfig / GPT2Config
 
     def __post_init__(self):
-        # Share the same base (no-BPE) dataset between REMI and REMIWithRules.
-        # REMIWithRules only changes BPE merge filtering; its underlying REMI
-        # tokenization without BPE is identical, so we reuse the plain REMI
-        # token directory when no BPE is requested.
+        # Share the same base (no-BPE) dataset between variant tokenizers and their base.
+        # Variant tokenizers (like REMIWithRules) only change BPE merge filtering;
+        # their underlying tokenization without BPE is identical to the base,
+        # so we reuse the base token directory when no BPE is requested.
         base_tokenization = self.tokenization
-        if (
-            self.tokenization == "REMIWithRules"
-            and self.tokenization_config.bpe_vocab_size is None
-        ):
-            base_tokenization = "REMI"
+        configured_base = TOKENIZATIONS_CONFIG.get(self.tokenization)
+        if configured_base is not None and self.tokenization_config.bpe_vocab_size is None:
+            # This is a variant tokenizer with no BPE - use base's tokens
+            base_tokenization = configured_base
 
         tokens_path_dir_name = f"{self.dataset}_{base_tokenization}"
         if self.tokenization_config.bpe_vocab_size is not None:
