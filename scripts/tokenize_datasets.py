@@ -478,16 +478,19 @@ if __name__ == "__main__":
                         tokens_path=tokens_path_no_bpe,
                         vocab_size=baseline.tokenization_config.bpe_vocab_size,
                         out_dir=baseline.tokens_path,
-                        save_converted_samples=True,
-                        files_lim=20,  # Limit files for faster BPE learning
+                        files_lim=1000,  # Limit files for faster BPE learning
                     )
+                    baseline.tokenizer.apply_bpe_slow_to_dataset(
+                        tokens_path_no_bpe, baseline.tokens_path
+                    )
+                    baseline.tokenizer.save_params(baseline.tokens_path / "config.txt")
                 else:
                     # Standard miditok tokenizer with fast BPE
                     print(f"[tokenize] Using learn_bpe (fast) for {baseline.tokenization}")
                     tokens_paths = list(tokens_path_no_bpe.glob("**/*.json"))
                     baseline.tokenizer.learn_bpe(
                         baseline.tokenization_config.bpe_vocab_size,
-                        tokens_paths=tokens_paths,
+                        tokens_paths=tokens_paths
                     )
                     baseline.tokenizer.apply_bpe_to_dataset(
                         tokens_path_no_bpe, baseline.tokens_path

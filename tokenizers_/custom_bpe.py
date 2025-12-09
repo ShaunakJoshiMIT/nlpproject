@@ -128,6 +128,110 @@ class CustomBPEBase(REMI):
         """
         return f"{token1_str} {token2_str}"
     
+    def decode_bpe(self, seq):
+        """
+        Decode BPE tokens back to base tokens.
+        
+        Handles space-concatenated merged tokens by splitting them
+        and converting back to base token IDs.
+        
+        :param seq: TokSequence or list of TokSequences to decode (modified in place)
+        """
+        from miditok import TokSequence
+        
+        # Handle list of sequences recursively
+        if isinstance(seq, list):
+            for s in seq:
+                self.decode_bpe(s)
+            return
+        
+        # Skip if not BPE encoded
+        if not self.has_bpe:
+            return
+        if isinstance(seq, TokSequence) and not seq.ids_bpe_encoded:
+            return
+        
+        decoded_ids = []
+        for id_ in seq.ids:
+            token_str = self[id_]
+            
+            # Check if this is a merged token (contains space)
+            if " " in token_str:
+                # Split back into base tokens
+                base_tokens = token_str.split(" ")
+                for base_tok in base_tokens:
+                    if base_tok in self._vocab_base:
+                        decoded_ids.append(self._vocab_base[base_tok])
+                    else:
+                        # Token not found, keep original (shouldn't happen)
+                        decoded_ids.append(id_)
+            else:
+                # Already a base token
+                decoded_ids.append(id_)
+        
+        seq.ids = decoded_ids
+        seq.ids_bpe_encoded = False
+        seq.tokens = None  # Will be rebuilt by complete_sequence
+    
+    def apply_bpe(self, seq):
+        """
+        Apply BPE encoding to a sequence using our space-concatenated tokens.
+        
+        This overrides the parent's apply_bpe to handle our custom naming scheme
+        where merged tokens are named like "Position_0 Pitch_60" instead of 
+        "BPE_{id1-id2}.{prime_ids}".
+        
+        :param seq: TokSequence or list of TokSequences to encode (modified in place)
+        """
+        from miditok import TokSequence
+        
+        # Handle list of sequences
+        if isinstance(seq, list):
+            for s in seq:
+                self.apply_bpe(s)
+            return
+        
+        if not self.has_bpe:
+            return
+        
+        # Build succession mapping: {new_token_id: (tok1_id, tok2_id)}
+        # by finding tokens with spaces (merged tokens)
+        if not hasattr(self, '_bpe_successions_custom') or self._bpe_successions_custom is None:
+            self._bpe_successions_custom = {}
+            for token_str, token_id in self._vocab_base.items():
+                if " " in token_str:
+                    # This is a merged token - get the first two parts' IDs
+                    # For multi-merge tokens like "A B C", we find the pair that created it
+                    parts = token_str.rsplit(" ", 1)  # Split from right to get last merge
+                    if len(parts) == 2:
+                        part1_str = parts[0]  # Could be "A B" or just "A"
+                        part2_str = parts[1]  # The last token "C" or "B"
+                        part1_id = self._vocab_base.get(part1_str)
+                        part2_id = self._vocab_base.get(part2_str)
+                        if part1_id is not None and part2_id is not None:
+                            self._bpe_successions_custom[token_id] = (part1_id, part2_id)
+        
+        # Apply BPE by repeatedly replacing token pairs with merged tokens
+        ids = list(seq.ids)  # Make a copy
+        changed = True
+        while changed:
+            changed = False
+            i = 0
+            while i < len(ids) - 1:
+                pair = (ids[i], ids[i + 1])
+                # Check if this pair can be merged
+                for new_id, succession in self._bpe_successions_custom.items():
+                    if succession == pair:
+                        ids[i] = new_id
+                        del ids[i + 1]
+                        changed = True
+                        break
+                else:
+                    i += 1
+        
+        seq.ids = ids
+        seq.ids_bpe_encoded = True
+    
     def learn_bpe_slow(
         self,
         tokens_path: Union[Path, str],
