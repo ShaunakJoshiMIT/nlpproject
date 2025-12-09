@@ -172,16 +172,16 @@ for dataset in datasets:
 
         # REMIWithRules baselines: noBPE, BPE-1000 and BPE-5000
         if tokenization == "REMI":
-            exp_name_rules = f'gen_{dataset}_REMIWithRules'
+            exp_name_rules = f'gen_{dataset}_REMIWithRulesCustomBPE'
             baselines_rules: List[BaselineGen] = []
 
             # REMIWithRules noBPE baseline
             data_conf_r, test_conf_r, model_conf_r, train_conf_r, gen_conf_r = \
                 map(deepcopy, [data_config, test_config, model_config, training_config, generation_config])
-            tok_config_rules_nb = TokenizationConfig("REMIWithRules", deepcopy(TOKENIZER_PARAMS))
+            tok_config_rules_nb = TokenizationConfig("CustomBPE", deepcopy(TOKENIZER_PARAMS))
             baselines_rules.append(
                 BaselineGen(
-                    "REMIWithRules_noBPE",
+                    "REMIWithRulesCustomBPE_noBPE",
                     exp_name_rules,
                     dataset,
                     SEED,
@@ -198,7 +198,7 @@ for dataset in datasets:
             for bpe_vocab_size in BPE_VOCAB_SIZES:
                 data_conf_r, test_conf_r, model_conf_r, train_conf_r, gen_conf_r = \
                     map(deepcopy, [data_config, test_config, model_config, training_config, generation_config])
-                tok_config_rules = TokenizationConfig("REMIWithRules", deepcopy(TOKENIZER_PARAMS), bpe_vocab_size)
+                tok_config_rules = TokenizationConfig("CustomBPE", deepcopy(TOKENIZER_PARAMS), bpe_vocab_size)
                 baselines_rules.append(
                     BaselineGen(
                         f"REMIWithRules_bpe{bpe_vocab_size}",

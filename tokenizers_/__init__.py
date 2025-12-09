@@ -7,4 +7,4 @@ from .REMIPlus_PVDm import REMIPlusPVDm
 from .TSDPlus import TSDPlus
 from .TSDPlus_PVm import TSDPlusPVm
 from .TSDPlus_PVDm import TSDPlusPVDm
-from .custom_bpe import REMIWithRules
+from .custom_bpe import CustomBPE

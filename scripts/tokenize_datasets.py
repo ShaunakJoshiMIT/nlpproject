@@ -17,7 +17,7 @@ from miditok.utils import merge_tracks_per_class
 from miditoolkit import MidiFile
 from transformers.trainer_utils import set_seed
 
-from tokenizers_.custom_bpe import REMIWithRules
+from tokenizers_.custom_bpe import CustomBPE
 
 from tqdm import tqdm
 import numpy as np
@@ -475,10 +475,21 @@ if __name__ == "__main__":
                 # For REMIWithRules baselines, the overridden train/learn_bpe
                 # in tokenizers_.REMIWithRules will filter merges according to
                 # your custom `should_block` rule.
-                baseline.tokenizer.learn_bpe(
-                    baseline.tokenization_config.bpe_vocab_size,
-                    tokens_paths=tokens_paths,
-                )
+                print(baseline.tokenization)
+                if baseline.tokenization == "REMI":
+                    baseline.tokenizer = CustomBPE(**baseline.tokenization_config.tokenizer_params)
+
+                if isinstance(baseline.tokenizer, CustomBPE):
+                    baseline.tokenizer.learn_bpe_slow(
+                        tokens_path=tokens_paths,
+                        vocab_size = baseline.tokenization_config.bpe_vocab_size,
+                        use_velocity = True,
+                        use_rhythm = True,
+                        use_harmony = True
+                    )
+                else:
+                    raise RuntimeError("Unknown tokenizer for BPE learning.")
+
                 baseline.tokenizer.apply_bpe_to_dataset(
                     tokens_path_no_bpe, baseline.tokens_path
                 )

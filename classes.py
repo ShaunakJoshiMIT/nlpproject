@@ -57,7 +57,7 @@ class Baseline(ABC):
         # token directory when no BPE is requested.
         base_tokenization = self.tokenization
         if (
-            self.tokenization == "REMIWithRules"
+            self.tokenization == "CustomBPE"
             and self.tokenization_config.bpe_vocab_size is None
         ):
             base_tokenization = "REMI"
