@@ -479,6 +479,7 @@ if __name__ == "__main__":
                         vocab_size=baseline.tokenization_config.bpe_vocab_size,
                         out_dir=baseline.tokens_path,
                         save_converted_samples=True,
+                        files_lim=20,  # Limit files for faster BPE learning
                     )
                 else:
                     # Standard miditok tokenizer with fast BPE
