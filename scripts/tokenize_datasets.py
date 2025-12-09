@@ -480,9 +480,9 @@ if __name__ == "__main__":
                         out_dir=baseline.tokens_path,
                         files_lim=1000,  # Limit files for faster BPE learning
                     )
-                    baseline.tokenizer.apply_bpe_to_dataset(
-                        tokens_path_no_bpe, baseline.tokens_path
-                    )
+                    # baseline.tokenizer.apply_bpe_to_dataset(
+                    #     tokens_path_no_bpe, baseline.tokens_path
+                    # )
                     baseline.tokenizer.save_params(baseline.tokens_path / "config.txt")
                 else:
                     # Standard miditok tokenizer with fast BPE
