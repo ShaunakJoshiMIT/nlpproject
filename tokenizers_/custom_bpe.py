@@ -43,6 +43,10 @@ class CustomBPEBase(REMI):
         """
         return False
     
+    def _has_bpe_tokens(self) -> bool:
+        """Check if vocab has BPE tokens (tokens with spaces)."""
+        return any(" " in tok for tok in list(self._vocab_base.keys()))
+    
     def __len__(self) -> int:
         """
         Return vocabulary size from _vocab_base.
@@ -51,6 +55,24 @@ class CustomBPEBase(REMI):
         when has_bpe=True, but we don't have a _bpe_model (we use slow BPE).
         """
         return len(self._vocab_base)
+    
+    def __getitem__(self, item):
+        """
+        Get token string from ID or ID from token string.
+        
+        Override because parent's __getitem__ uses _bpe_model when has_bpe=True,
+        but we don't have a _bpe_model. Use _vocab_base directly.
+        """
+        if isinstance(item, int):
+            # ID to token string - build reverse lookup if needed
+            if not hasattr(self, '_id_to_token') or self._id_to_token is None:
+                self._id_to_token = {v: k for k, v in self._vocab_base.items()}
+            return self._id_to_token.get(item, f"UNKNOWN_{item}")
+        elif isinstance(item, str):
+            # Token string to ID
+            return self._vocab_base.get(item, -1)
+        else:
+            raise TypeError(f"Unsupported type for __getitem__: {type(item)}")
     
     def complete_sequence(self, seq):
         """
@@ -190,8 +212,8 @@ class CustomBPEBase(REMI):
                 self.decode_bpe(s)
             return
         
-        # Skip if no BPE vocab learned
-        if not self.has_bpe:
+        # Skip if no BPE vocab learned (check for tokens with spaces)
+        if not self._has_bpe_tokens():
             return
         
         # NOTE: Don't check ids_bpe_encoded flag - generated sequences from model
@@ -237,7 +259,7 @@ class CustomBPEBase(REMI):
                 self.apply_bpe(s)
             return
         
-        if not self.has_bpe:
+        if not self._has_bpe_tokens():
             return
         
         # Build succession mapping: {new_token_id: (tok1_id, tok2_id)}
@@ -490,7 +512,6 @@ class CustomBPEBase(REMI):
             pbar.update(1)
         
         pbar.close()
-        self.has_bpe = True
         
         print(f"[{self.__class__.__name__}] BPE complete. Skipped {skipped_merges} invalid merges.")
         

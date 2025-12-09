@@ -37,7 +37,7 @@ BPE_VOCAB_SIZES = [500]
 # - If base_tokenization is set, it reuses that tokenization's noBPE tokens
 # NOTE: Primary tokenizations must be listed BEFORE their variants
 TOKENIZATIONS_CONFIG = {
-    "REMI": None,                    # Primary - creates its own noBPE
+    # "REMI": None,                    # Primary - creates its own noBPE
     "RhythmBPE": "REMI",             # Blocks Bar token merges (rhythm preservation)
     "HarmonicBPE": "REMI",           # Only harmonically valid pitch intervals
     "VelocityBPE": "REMI",           # Only small velocity differences
