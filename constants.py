@@ -37,11 +37,11 @@ BPE_VOCAB_SIZES = [1000, 5000, 10000, 20000]
 # - If base_tokenization is set, it reuses that tokenization's noBPE tokens
 # NOTE: Primary tokenizations must be listed BEFORE their variants
 TOKENIZATIONS_CONFIG = {
-    # "REMI": None,                    # Primary - creates its own noBPE
-    # "RhythmBPE": "REMI",             # Blocks Bar token merges (rhythm preservation)
+    "REMI": None,                    # Primary - creates its own noBPE
+    "RhythmBPE": "REMI",             # Blocks Bar token merges (rhythm preservation)
     "HarmonicBPE": "REMI",           # Only harmonically valid pitch intervals
     "VelocityBPE": "REMI",           # Only small velocity differences
-    # "CombinedBPE": "REMI",           # All three rules combined
+    "CombinedBPE": "REMI",           # All three rules combined
 }
 
 # List of all tokenizations (for iteration)
@@ -74,7 +74,7 @@ TORCH_COMPILE_MODE = None
 USE_GRADIENT_CHECKPOINTING = True
 DDP_FIND_UNUSED_PARAMETERS = False
 DDP_BUCKET_CAP_MB = None  # default to 25mb
-TRAINING_STEPS = 10
+TRAINING_STEPS = 10000
 VALID_INTVL = 1000
 LOG_STEPS_INTVL = 20
 SAVE_STEPS = 1000
@@ -93,8 +93,8 @@ TEST_SPLIT_GEN = 0.10
 
 # Optional caps to speed up generative experiments (None = no cap)
 # These limit how many token windows are used for train / eval / test.
-MAX_TRAIN_SAMPLES_GEN = 1000  # 1000 training iterations
-MAX_EVAL_SAMPLES_GEN = None   # No limit - use full test set
+MAX_TRAIN_SAMPLES_GEN = 10000
+MAX_EVAL_SAMPLES_GEN = None
 
 # TRAINING PARAMS PRETRAINING
 BATCH_SIZE_PT = BATCH_SIZE

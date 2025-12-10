@@ -35,6 +35,10 @@ if __name__ == "__main__":
 
     for exp in experiments:
         for bi, baseline in enumerate(exp.baselines):
+            # Only run inference on CombinedBPE models
+            if not baseline.tokenization.startswith("Combined"):
+                continue
+            
             logger.debug(
                 f"\n{exp.name} - {baseline.name} - vocab size: {len(baseline.tokenizer)} tokens"
             )
