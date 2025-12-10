@@ -35,6 +35,10 @@ if __name__ == "__main__":
 
     for exp in experiments:
         for bi, baseline in enumerate(exp.baselines):
+            # Only run inference on CombinedBPE models
+            if not baseline.tokenization.startswith("Combined"):
+                continue
+            
             logger.debug(
                 f"\n{exp.name} - {baseline.name} - vocab size: {len(baseline.tokenizer)} tokens"
             )
@@ -104,11 +108,16 @@ if __name__ == "__main__":
                 nb_beats.append(midi.max_tick / midi.ticks_per_beat)
                 nb_notes.append(len(midi.instruments[0].notes))
 
-                # Decode BPE
+                # Decode BPE (handles both standard and custom slow BPE)
+                # Check for custom slow BPE first, then standard BPE
+                has_custom_bpe = (hasattr(baseline.tokenizer, '_has_bpe_tokens') 
+                                  and baseline.tokenizer._has_bpe_tokens())
+                has_standard_bpe = baseline.tokenizer.has_bpe
+                
                 tok_seq = TokSequence(
-                    ids=seq, ids_bpe_encoded=baseline.tokenizer.has_bpe
+                    ids=seq, ids_bpe_encoded=(has_custom_bpe or has_standard_bpe)
                 )
-                if baseline.tokenizer.has_bpe:
+                if has_custom_bpe or has_standard_bpe:
                     baseline.tokenizer.decode_bpe(tok_seq)
                 elif baseline.tokenization.endswith("PVm"):
                     token_ids = LongTensor(baseline.tokenizer.token_ids_of_type("PitchVel"))

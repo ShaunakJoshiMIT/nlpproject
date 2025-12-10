@@ -123,13 +123,17 @@ generation_config = GenerationConfig(
 
 datasets = ["Maestro"]
 experiments = []
+
 for dataset in datasets:
-    for tokenization in TOKENIZATIONS:
-        # Standard REMI baselines: noBPE, BPE-1000, BPE-5000
+    # Iterate over all tokenizations defined in TOKENIZATIONS_CONFIG
+    # This includes both primary tokenizers (like REMI) and variants (like REMIWithRules)
+    for tokenization in TOKENIZATIONS_CONFIG.keys():
         exp_name = f'gen_{dataset}_{tokenization}'
         baselines: List[BaselineGen] = []
 
-        # noBPE baseline (will be trained and tested for comparison)
+        # noBPE baseline
+        # For variant tokenizers, this will reuse the base tokenizer's tokens
+        # (handled in Baseline.__post_init__ via TOKENIZATIONS_CONFIG)
         data_conf_, test_conf_, model_conf_, train_conf_, gen_conf_ = \
             map(deepcopy, [data_config, test_config, model_config, training_config, generation_config])
         tok_config = TokenizationConfig(tokenization, deepcopy(TOKENIZER_PARAMS))
@@ -148,7 +152,7 @@ for dataset in datasets:
             )
         )
 
-        # BPE baselines (vocab sizes 1000, 5000) - these will be trained and tested
+        # BPE baselines for all vocab sizes defined in BPE_VOCAB_SIZES
         for bpe_vocab_size in BPE_VOCAB_SIZES:
             data_conf_, test_conf_, model_conf_, train_conf_, gen_conf_ = \
                 map(deepcopy, [data_config, test_config, model_config, training_config, generation_config])
@@ -169,51 +173,6 @@ for dataset in datasets:
             )
 
         experiments.append(Experiment(exp_name, baselines, dataset))
-
-        # REMIWithRules baselines: noBPE, BPE-1000 and BPE-5000
-        if tokenization == "REMI":
-            exp_name_rules = f'gen_{dataset}_REMIWithRulesCustomBPE'
-            baselines_rules: List[BaselineGen] = []
-
-            # REMIWithRules noBPE baseline
-            data_conf_r, test_conf_r, model_conf_r, train_conf_r, gen_conf_r = \
-                map(deepcopy, [data_config, test_config, model_config, training_config, generation_config])
-            tok_config_rules_nb = TokenizationConfig("CustomBPE", deepcopy(TOKENIZER_PARAMS))
-            baselines_rules.append(
-                BaselineGen(
-                    "REMIWithRulesCustomBPE_noBPE",
-                    exp_name_rules,
-                    dataset,
-                    SEED,
-                    tok_config_rules_nb,
-                    model_conf_r,
-                    train_conf_r,
-                    data_conf_r,
-                    test_conf_r,
-                    gen_conf_r,
-                )
-            )
-
-            # REMIWithRules BPE baselines (1000, 5000)
-            for bpe_vocab_size in BPE_VOCAB_SIZES:
-                data_conf_r, test_conf_r, model_conf_r, train_conf_r, gen_conf_r = \
-                    map(deepcopy, [data_config, test_config, model_config, training_config, generation_config])
-                tok_config_rules = TokenizationConfig("CustomBPE", deepcopy(TOKENIZER_PARAMS), bpe_vocab_size)
-                baselines_rules.append(
-                    BaselineGen(
-                        f"REMIWithRules_bpe{bpe_vocab_size}",
-                        exp_name_rules,
-                        dataset,
-                        SEED,
-                        tok_config_rules,
-                        model_conf_r,
-                        train_conf_r,
-                        data_conf_r,
-                        test_conf_r,
-                        gen_conf_r,
-                    )
-                )
-            experiments.append(Experiment(exp_name_rules, baselines_rules, dataset))
 
 
 def save_generation_tokens(prompt: Tensor, continuation: Tensor, tokenizer, out_dir: Path, file_name: Union[int, str]):
@@ -275,6 +234,7 @@ class ComputeMetrics:
             "tse_nnon": round(float(np.mean(tse_[:, 3])), 10),
             "tse_nnof": round(float(np.mean(tse_[:, 4])), 10),
         }
+        print(f"[TSE Full Precision] " + ", ".join(f"{k}: {v:.10f}" for k, v in metric_res.items()))
 
         return metric_res
 

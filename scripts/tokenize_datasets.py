@@ -467,30 +467,36 @@ if __name__ == "__main__":
             else:
                 set_seed(42)  # for file lim random selection
                 tokens_path_no_bpe = exp.baselines[0].tokens_path
-                tokens_paths = list(tokens_path_no_bpe.glob("**/*.json"))
                 baseline.tokens_path.mkdir(exist_ok=True, parents=True)
 
                 # Learn BPE using the tokenizer associated with this baseline.
-                # For plain REMI baselines this is standard Miditok REMI BPE.
-                # For REMIWithRules baselines, the overridden train/learn_bpe
-                # in tokenizers_.REMIWithRules will filter merges according to
-                # your custom `should_block` rule.
-                print(baseline.tokenization)
-                if baseline.tokenization == "REMI":
-                    baseline.tokenizer = CustomBPE(**baseline.tokenization_config.tokenizer_params)
-
-                if isinstance(baseline.tokenizer, CustomBPE):
+                # Custom tokenizers (RhythmBPE, HarmonicBPE, VelocityBPE, CombinedBPE)
+                # inherit from CustomBPEBase and use learn_bpe_slow for custom merge rules.
+                # Standard miditok tokenizers use the fast learn_bpe.
+                from tokenizers_.custom_bpe import CustomBPEBase
+                
+                if isinstance(baseline.tokenizer, CustomBPEBase):
+                    # Custom tokenizer with learn_bpe_slow
+                    print(f"[tokenize] Using learn_bpe_slow for {baseline.tokenization}")
                     baseline.tokenizer.learn_bpe_slow(
-                        tokens_path=tokens_paths,
-                        vocab_size = baseline.tokenization_config.bpe_vocab_size,
-                        use_velocity = True,
-                        use_rhythm = True,
-                        use_harmony = True
+                        tokens_path=tokens_path_no_bpe,
+                        vocab_size=baseline.tokenization_config.bpe_vocab_size,
+                        out_dir=baseline.tokens_path,
+                        files_lim=1000,  # Limit files for faster BPE learning
                     )
+                    # baseline.tokenizer.apply_bpe_to_dataset(
+                    #     tokens_path_no_bpe, baseline.tokens_path
+                    # )
+                    baseline.tokenizer.save_params(baseline.tokens_path / "config.txt")
                 else:
-                    raise RuntimeError("Unknown tokenizer for BPE learning.")
-
-                baseline.tokenizer.apply_bpe_to_dataset(
-                    tokens_path_no_bpe, baseline.tokens_path
-                )
-                baseline.tokenizer.save_params(baseline.tokens_path / "config.txt")
+                    # Standard miditok tokenizer with fast BPE
+                    print(f"[tokenize] Using learn_bpe (fast) for {baseline.tokenization}")
+                    tokens_paths = list(tokens_path_no_bpe.glob("**/*.json"))
+                    baseline.tokenizer.learn_bpe(
+                        baseline.tokenization_config.bpe_vocab_size,
+                        tokens_paths=tokens_paths
+                    )
+                    baseline.tokenizer.apply_bpe_to_dataset(
+                        tokens_path_no_bpe, baseline.tokens_path
+                    )
+                    baseline.tokenizer.save_params(baseline.tokens_path / "config.txt")

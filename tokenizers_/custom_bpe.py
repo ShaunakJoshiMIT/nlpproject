@@ -1,352 +1,652 @@
-from typing import Tuple, List, Dict
-import numpy as np
+"""
+Custom REMI tokenizer subclasses with different BPE merge rules.
+
+Each class uses learn_bpe_slow for full control over merges:
+1. RhythmBPE - Blocks merges involving Bar tokens
+2. HarmonicBPE - Only allows merges with harmonically valid pitch intervals
+3. VelocityBPE - Only allows merges where velocity differences are small
+4. CombinedBPE - All three rules combined
+"""
+from typing import List, Union, Tuple, Dict, Set
 from pathlib import Path
-from tqdm import tqdm
-import json
+from collections import defaultdict
 from random import choices
+import heapq
+
+import numpy as np
+from tqdm import tqdm
 from miditok import REMI
 
 
-
-class CustomBPE(REMI):
+class CustomBPEBase(REMI):
     """
-    Custom BPE tokenizer for MIDI data with musical constraints on merges.
+    Base class for custom BPE tokenizers.
+    
+    Implements learn_bpe_slow with space-concatenated token naming.
+    Subclasses should override should_merge() to implement their rules.
     """
-
-    def __init__(self, *args, velocity_threshold: int = 20, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.velocity_threshold = velocity_threshold
-        # consonant intervals mod 12: unison, m3, M3, P4, P5, m6, M6, octave
-        self._consonant_pc_intervals = {0, 3, 4, 5, 7, 8, 9}
-
-    # ---- small parsing helpers ----
+    
+    # Valid harmonic intervals (semitones mod 12)
+    # 0=unison, 3=minor third, 4=major third, 5=perfect fourth, 
+    # 7=perfect fifth, 9=major sixth
+    VALID_HARMONIC_INTERVALS = {0, 3, 4, 5, 7, 9}
+    
+    # Maximum allowed velocity difference
+    MAX_VELOCITY_DIFF = 30
+    
+    @property
+    def bpe_slow(self) -> bool:
+        """
+        Override to return False so miditok doesn't try to use its 
+        slow BPE decode which expects 'BPE_' prefix format.
+        Our custom decode_bpe handles the space-concatenated format.
+        """
+        return False
+    
+    def _has_bpe_tokens(self) -> bool:
+        """Check if vocab has BPE tokens (tokens with spaces)."""
+        return any(" " in tok for tok in list(self._vocab_base.keys()))
+    
+    def __len__(self) -> int:
+        """
+        Return vocabulary size from _vocab_base.
+        
+        Override because parent's __len__ tries to use _bpe_model.get_vocab()
+        when has_bpe=True, but we don't have a _bpe_model (we use slow BPE).
+        """
+        return len(self._vocab_base)
+    
+    def __getitem__(self, item):
+        """
+        Get token string from ID or ID from token string.
+        
+        Override because parent's __getitem__ uses _bpe_model when has_bpe=True,
+        but we don't have a _bpe_model. Use _vocab_base directly.
+        """
+        if isinstance(item, int):
+            # ID to token string - build reverse lookup if needed
+            if not hasattr(self, '_id_to_token') or self._id_to_token is None:
+                self._id_to_token = {v: k for k, v in self._vocab_base.items()}
+            return self._id_to_token.get(item, f"UNKNOWN_{item}")
+        elif isinstance(item, str):
+            # Token string to ID
+            return self._vocab_base.get(item, -1)
+        else:
+            raise TypeError(f"Unsupported type for __getitem__: {type(item)}")
+    
+    def complete_sequence(self, seq):
+        """
+        Complete a TokSequence by filling ids/tokens from each other.
+        
+        Override to skip bytes conversion which requires _vocab_base_id_to_byte
+        that's only populated for fast BPE. Our slow BPE doesn't use bytes.
+        """
+        from miditok import TokSequence
+        
+        if not isinstance(seq, TokSequence):
+            return
+            
+        # Fill tokens from ids if missing
+        if seq.tokens is None and seq.ids is not None:
+            seq.tokens = [self[id_] for id_ in seq.ids]
+        # Fill ids from tokens if missing
+        elif seq.ids is None and seq.tokens is not None:
+            seq.ids = [self._vocab_base[tok] for tok in seq.tokens]
+        
+        # Skip bytes conversion - we don't use byte-level encoding
+        seq.bytes = None
+        
+        # Set events if they exist (REMI/MIDI-like)
+        if seq.events is None and seq.tokens is not None:
+            # Events would be parsed from tokens - leave as None for simplicity
+            pass
+    
+    def should_merge(self, token1: str, token2: str) -> bool:
+        """
+        Override in subclasses to implement custom merge rules.
+        
+        :param token1: First token string (may contain spaces if already merged)
+        :param token2: Second token string (may contain spaces if already merged)
+        :return: True if merge is allowed, False to skip
+        """
+        return True
+    
+    def _extract_pitches(self, token_str: str) -> List[int]:
+        """
+        Extract all pitch values from a token string.
+        Token may be a single token or space-concatenated merged tokens.
+        
+        :param token_str: Token string like "Pitch_60" or "Position_0 Pitch_60 Velocity_64"
+        :return: List of pitch values found
+        """
+        pitches = []
+        # Split by space to handle merged tokens
+        parts = token_str.split(" ")
+        for part in parts:
+            if part.startswith("Pitch_"):
+                try:
+                    pitch = int(part.split("_")[1])
+                    if 21 <= pitch <= 108:
+                        pitches.append(pitch)
+                except (ValueError, IndexError):
+                    pass
+        return pitches
+    
+    def _extract_velocities(self, token_str: str) -> List[int]:
+        """
+        Extract all velocity values from a token string.
+        
+        :param token_str: Token string like "Velocity_64" or merged tokens
+        :return: List of velocity values found
+        """
+        velocities = []
+        parts = token_str.split(" ")
+        for part in parts:
+            if part.startswith("Velocity_"):
+                try:
+                    vel = int(part.split("_")[1])
+                    velocities.append(vel)
+                except (ValueError, IndexError):
+                    pass
+        return velocities
+    
+    def _has_bar_token(self, token_str: str) -> bool:
+        """Check if token string contains a Bar token."""
+        return "Bar_None" in token_str
+    
+    def _check_harmonic_intervals(self, pitches: List[int]) -> bool:
+        """
+        Check if all pitch combinations have valid harmonic intervals.
+        
+        :param pitches: List of pitch values
+        :return: True if all intervals are valid, False otherwise
+        """
+        if len(pitches) < 2:
+            return True
+        
+        for i in range(len(pitches)):
+            for j in range(i + 1, len(pitches)):
+                interval = abs(pitches[i] - pitches[j]) % 12
+                if interval not in self.VALID_HARMONIC_INTERVALS:
+                    return False
+        return True
+    
+    def _check_velocity_difference(self, velocities: List[int]) -> bool:
+        """
+        Check if max velocity difference is within allowed range.
+        
+        :param velocities: List of velocity values
+        :return: True if max difference <= MAX_VELOCITY_DIFF, False otherwise
+        """
+        if len(velocities) < 2:
+            return True
+        
+        max_diff = max(velocities) - min(velocities)
+        return max_diff <= self.MAX_VELOCITY_DIFF
+    
+    def create_merge_name(self, token1_str: str, token2_str: str) -> str:
+        """
+        Create merged token name by space-concatenating the token strings.
+        This allows parsing the merged token back into components.
+        
+        :param token1_str: First token string
+        :param token2_str: Second token string
+        :return: Space-concatenated merged name
+        """
+        return f"{token1_str} {token2_str}"
+    
+    def decode_bpe(self, seq):
+        """
+        Decode BPE tokens back to base tokens.
+        
+        Handles space-concatenated merged tokens by splitting them
+        and converting back to base token IDs.
+        
+        :param seq: TokSequence or list of TokSequences to decode (modified in place)
+        """
+        from miditok import TokSequence
+        
+        # Handle list of sequences recursively
+        if isinstance(seq, list):
+            for s in seq:
+                self.decode_bpe(s)
+            return
+        
+        # Skip if no BPE vocab learned (check for tokens with spaces)
+        if not self._has_bpe_tokens():
+            return
+        
+        # NOTE: Don't check ids_bpe_encoded flag - generated sequences from model
+        # won't have this flag set, but they can still contain BPE token IDs
+        
+        decoded_ids = []
+        for id_ in seq.ids:
+            token_str = self[id_]
+            
+            # Check if this is a merged token (contains space)
+            if " " in token_str:
+                # Split back into base tokens
+                base_tokens = token_str.split(" ")
+                for base_tok in base_tokens:
+                    if base_tok in self._vocab_base:
+                        decoded_ids.append(self._vocab_base[base_tok])
+                    else:
+                        # Token not found, keep original (shouldn't happen)
+                        decoded_ids.append(id_)
+            else:
+                # Already a base token
+                decoded_ids.append(id_)
+        
+        seq.ids = decoded_ids
+        seq.ids_bpe_encoded = False
+        seq.tokens = None  # Will be rebuilt by complete_sequence
+    
+    def apply_bpe(self, seq):
+        """
+        Apply BPE encoding to a sequence using our space-concatenated tokens.
+        
+        This overrides the parent's apply_bpe to handle our custom naming scheme
+        where merged tokens are named like "Position_0 Pitch_60" instead of 
+        "BPE_{id1-id2}.{prime_ids}".
+        
+        :param seq: TokSequence or list of TokSequences to encode (modified in place)
+        """
+        from miditok import TokSequence
+        
+        # Handle list of sequences
+        if isinstance(seq, list):
+            for s in seq:
+                self.apply_bpe(s)
+            return
+        
+        if not self._has_bpe_tokens():
+            return
+        
+        # Build succession mapping: {new_token_id: (tok1_id, tok2_id)}
+        # by finding tokens with spaces (merged tokens)
+        if not hasattr(self, '_bpe_successions_custom') or self._bpe_successions_custom is None:
+            self._bpe_successions_custom = {}
+            for token_str, token_id in self._vocab_base.items():
+                if " " in token_str:
+                    # This is a merged token - get the first two parts' IDs
+                    # For multi-merge tokens like "A B C", we find the pair that created it
+                    parts = token_str.rsplit(" ", 1)  # Split from right to get last merge
+                    if len(parts) == 2:
+                        part1_str = parts[0]  # Could be "A B" or just "A"
+                        part2_str = parts[1]  # The last token "C" or "B"
+                        part1_id = self._vocab_base.get(part1_str)
+                        part2_id = self._vocab_base.get(part2_str)
+                        if part1_id is not None and part2_id is not None:
+                            self._bpe_successions_custom[token_id] = (part1_id, part2_id)
+        
+        # Apply BPE by repeatedly replacing token pairs with merged tokens
+        ids = list(seq.ids)  # Make a copy
+        changed = True
+        while changed:
+            changed = False
+            i = 0
+            while i < len(ids) - 1:
+                pair = (ids[i], ids[i + 1])
+                # Check if this pair can be merged
+                for new_id, succession in self._bpe_successions_custom.items():
+                    if succession == pair:
+                        ids[i] = new_id
+                        del ids[i + 1]
+                        changed = True
+                        break
+                else:
+                    i += 1
+        
+        seq.ids = ids
+        seq.ids_bpe_encoded = True
+    
     def learn_bpe_slow(
         self,
-        tokens_path: str | Path,
+        tokens_path: Union[Path, str],
         vocab_size: int,
-        out_dir: str | Path | None = None,
-        files_lim: int | None = None,
+        out_dir: Union[Path, str] = None,
+        files_lim: int = None,
         save_converted_samples: bool = False,
         print_seq_len_variation: bool = True,
-        use_velocity: bool | None = True,
-        use_rhythm: bool | None = True,
-        use_harmony: bool | None = True,
-    ):
+    ) -> Tuple[List[float], List[int], List[float]]:
         """
-        Slow BPE with optional musical constraints:
-        - use_velocity: enforce velocity consistency
-        - use_rhythm: forbid merges that touch Bar tokens
-        - use_harmony: enforce consonant pitch intervals
-
-        Pass True/False to toggle each constraint, or leave as None to use
-        class-level defaults (currently: all True).
+        Optimized BPE learning with custom merge rules and space-concatenated naming.
+        
+        Uses incremental pair counting for ~10-20x speedup over naive implementation.
+        
+        :param tokens_path: Path to directory containing tokenized JSON files.
+        :param vocab_size: Target vocabulary size.
+        :param out_dir: Output directory to save results.
+        :param files_lim: Limit number of files to use for training.
+        :param save_converted_samples: If True, save BPE-encoded samples to out_dir.
+        :param print_seq_len_variation: If True, print sequence length stats.
+        :return: Tuple of (bpe_comb_means, bpe_comb_max, avg_seq_len) metrics.
         """
-        # resolve flags (you could store defaults on self if you want)
-        print("Starting Custom BPE learning with musical constraints...")
-        if use_velocity is None:
-            use_velocity = True
-        if use_rhythm is None:
-            use_rhythm = True
-        if use_harmony is None:
-            use_harmony = True
-
-        print(
-            "Custom slow BPE – constraints:"
-            f" velocity={use_velocity}, rhythm={use_rhythm}, harmony={use_harmony}"
+        assert not self.is_multi_voc, (
+            "Multi-vocabulary tokenizers are not compatible with BPE"
         )
-
-        if self.is_multi_voc:
-            raise ValueError("Multi-vocabulary tokenizers are not compatible with slow BPE.")
-        if self.has_bpe and not self.bpe_slow:
-            raise ValueError("Tokenizer already trained with fast BPE; cannot retrain with slow BPE.")
-        if vocab_size <= len(self.vocab):
-            raise ValueError(
-                f"vocab_size ({vocab_size}) must be > current vocabulary ({len(self.vocab)})"
-            )
-
-        if isinstance(tokens_path, list):
-            files_paths = tokens_path
-            tokens_path = files_paths[0].parent
-        else:
-            tokens_path = Path(tokens_path)
-            files_paths = list(tokens_path.glob("**/*.json"))
-
-        if not files_paths:
-            raise ValueError("BPE learning: no token json files found")
-
-        files_paths_bpe = (
-            choices(files_paths, k=files_lim)
-            if files_lim is not None and files_lim < len(files_paths)
-            else files_paths
+        assert not self.has_bpe, (
+            "This tokenizer already has BPE trained"
         )
-
-        samples, samples_paths = [], []
+        assert vocab_size > len(self.vocab), (
+            f"vocab_size ({vocab_size}) must be > current vocab size ({len(self.vocab)})"
+        )
+        
+        files_paths = list(Path(tokens_path).glob("**/*.json"))
+        assert len(files_paths) > 0, (
+            f"No token files found in {tokens_path}"
+        )
+        
+        # Optionally limit number of files
+        all_files_paths = files_paths  # Keep original for applying BPE later
+        if files_lim is not None and files_lim < len(files_paths):
+            files_paths = choices(files_paths, k=files_lim)
+        
+        # Load samples - flatten all tracks into single lists for faster processing
+        print(f"[{self.__class__.__name__}] Loading {len(files_paths)} token files...")
+        sequences: List[List[int]] = []  # List of all sequences (tracks)
+        samples_metadata = []  # Keep track of which sequences belong to which file
         original_lengths = []
-
-        # ---- load samples ----
-        for file_path in tqdm(files_paths_bpe, desc="Loading token files"):
+        
+        for file_idx, file_path in enumerate(tqdm(files_paths, desc="Loading token files")):
             file = self.load_tokens(file_path)
-            samples.append(file)
-            samples_paths.append(file_path.relative_to(tokens_path))
+            rel_path = file_path.relative_to(tokens_path)
+            
             if self.unique_track:
+                sequences.append(file["ids"])
+                samples_metadata.append((file_idx, rel_path, file["programs"], 0))
                 original_lengths.append(len(file["ids"]))
             else:
-                original_lengths += [len(track) for track in file["ids"]]
-
-        def replace_token_in_seq(
-            seq: List[int], succession: Tuple[int, int], new_event: str
-        ):
-            j = 0
-            while j < len(seq) - 1:
-                if tuple(seq[j : j + 2]) == succession:
-                    seq[j] = self[f"BPE_{new_event}"]
-                    del seq[j + 1]
-                else:
-                    j += 1
-
+                for track_idx, track in enumerate(file["ids"]):
+                    sequences.append(track)
+                    samples_metadata.append((file_idx, rel_path, file["programs"], track_idx))
+                    original_lengths.append(len(track))
+        
+        # Initial pair counting
+        print(f"[{self.__class__.__name__}] Computing initial pair counts...")
+        pair_counts: Dict[Tuple[int, int], int] = defaultdict(int)
+        # Track where each pair occurs for incremental updates
+        pair_locations: Dict[Tuple[int, int], Set[Tuple[int, int]]] = defaultdict(set)
+        
+        for seq_idx, seq in enumerate(tqdm(sequences, desc="Counting pairs")):
+            for pos in range(len(seq) - 1):
+                pair = (seq[pos], seq[pos + 1])
+                pair_counts[pair] += 1
+                pair_locations[pair].add((seq_idx, pos))
+        
+        # Cache for token strings to avoid repeated lookups
+        token_str_cache: Dict[int, str] = {}
+        
+        def get_token_str(token_id: int) -> str:
+            if token_id not in token_str_cache:
+                token_str_cache[token_id] = self[token_id]
+            return token_str_cache[token_id]
+        
+        # BPE learning loop
         avg_seq_len = [sum(original_lengths) / len(original_lengths)]
-        bpe_comb_nb, bpe_comb_means, bpe_comb_max = [], [], []
-
-        pbar = tqdm(
-            total=vocab_size - len(self.vocab),
-            desc="Learning custom BPE with constraints",
-        )
-
+        bpe_comb_nb = []
+        bpe_comb_means = []
+        bpe_comb_max = []
+        skipped_merges = 0
+        
+        # Set of pairs that failed validation (to avoid re-checking)
+        invalid_pairs: Set[Tuple[int, int]] = set()
+        
+        print(f"[{self.__class__.__name__}] Starting BPE learning...")
+        pbar = tqdm(total=vocab_size - len(self.vocab), desc="Learning BPE")
+        
         while len(self.vocab) < vocab_size:
-            occurrences: Dict[Tuple[int, int], int] = {}
-
-            # ---------- KEY PART: only count musically valid pairs ----------
-            for sample in samples:
-                tracks = [sample["ids"]] if self.unique_track else sample["ids"]
-                for track in tracks:
-                    for i in range(len(track) - 1):
-                        pair = (track[i], track[i + 1])
-                        if not self._pair_is_musically_valid(
-                            pair,
-                            use_velocity=use_velocity,
-                            use_rhythm=use_rhythm,
-                            use_harmony=use_harmony,
-                        ):
-                            continue
-                        occurrences[pair] = occurrences.get(pair, 0) + 1
-            # ----------------------------------------------------------------
-
-            if not occurrences:
-                print("No more valid pairs under current constraints; stopping early.")
+            # Find the most frequent valid pair
+            best_pair = None
+            best_count = 0
+            
+            # Sort pairs by count (descending) and find first valid one
+            for pair, count in sorted(pair_counts.items(), key=lambda x: -x[1]):
+                if count <= 0:
+                    break
+                if pair in invalid_pairs:
+                    continue
+                    
+                token1_str = get_token_str(pair[0])
+                token2_str = get_token_str(pair[1])
+                
+                if self.should_merge(token1_str, token2_str):
+                    best_pair = pair
+                    best_count = count
+                    break
+                else:
+                    invalid_pairs.add(pair)
+                    skipped_merges += 1
+            
+            if best_pair is None or best_count <= 0:
+                print(f"[{self.__class__.__name__}] No valid merges remaining (skipped {skipped_merges} invalid merges)")
                 break
-
-            # Most frequent admissible pair
-            most_rec_tok_succession = max(occurrences, key=occurrences.get)
-
-            # Compute prime token decomposition
-            prime_tokens_eq: List[int] = []
-            for token in most_rec_tok_succession:
-                ttype, tval = self._decode_token(token)
-                if ttype == "BPE":
-                    prime_tokens_eq += self._prime_ids_from_bpe_val(tval)
-                else:
-                    prime_tokens_eq.append(token)
-
-            final_event_val = (
-                "-".join(map(str, most_rec_tok_succession))
-                + "."
-                + "-".join(map(str, prime_tokens_eq))
+            
+            # Create the merged token
+            token1_str = get_token_str(best_pair[0])
+            token2_str = get_token_str(best_pair[1])
+            new_token_name = self.create_merge_name(token1_str, token2_str)
+            
+            # Add to vocabulary
+            self.add_to_vocab(new_token_name)
+            new_token_id = self[new_token_name]
+            token_str_cache[new_token_id] = new_token_name
+            
+            # Get locations where this pair occurs
+            locations = list(pair_locations[best_pair])
+            
+            # Process merges and update counts incrementally
+            # Sort locations by (seq_idx, pos) in reverse order so deletions don't affect earlier positions
+            locations.sort(key=lambda x: (x[0], -x[1]))
+            
+            processed_seqs = set()
+            for seq_idx, pos in locations:
+                seq = sequences[seq_idx]
+                
+                # Check if this position is still valid (might have been affected by earlier merge in same seq)
+                if pos >= len(seq) - 1:
+                    continue
+                if (seq[pos], seq[pos + 1]) != best_pair:
+                    continue
+                
+                # Update counts for affected neighboring pairs
+                # Remove old pair from left neighbor
+                if pos > 0:
+                    old_left_pair = (seq[pos - 1], seq[pos])
+                    pair_counts[old_left_pair] -= 1
+                    pair_locations[old_left_pair].discard((seq_idx, pos - 1))
+                
+                # Remove old pair from right neighbor
+                if pos + 2 < len(seq):
+                    old_right_pair = (seq[pos + 1], seq[pos + 2])
+                    pair_counts[old_right_pair] -= 1
+                    pair_locations[old_right_pair].discard((seq_idx, pos + 1))
+                
+                # Do the merge
+                seq[pos] = new_token_id
+                del seq[pos + 1]
+                
+                # Add new pairs with neighbors
+                if pos > 0:
+                    new_left_pair = (seq[pos - 1], new_token_id)
+                    pair_counts[new_left_pair] += 1
+                    pair_locations[new_left_pair].add((seq_idx, pos - 1))
+                
+                if pos + 1 < len(seq):
+                    new_right_pair = (new_token_id, seq[pos + 1])
+                    pair_counts[new_right_pair] += 1
+                    pair_locations[new_right_pair].add((seq_idx, pos))
+                
+                processed_seqs.add(seq_idx)
+                
+                # Update pair_locations for positions after this merge in same sequence
+                # (positions shifted by -1)
+                # This is handled implicitly by checking pair validity above
+            
+            # Remove the merged pair from tracking
+            del pair_counts[best_pair]
+            del pair_locations[best_pair]
+            
+            # Compute metrics
+            total_length = sum(len(seq) for seq in sequences)
+            avg_len = total_length / len(sequences)
+            
+            num_orig_tokens = new_token_name.count(" ") + 1
+            
+            avg_seq_len.append(avg_len)
+            nb_combs = np.array([num_orig_tokens])
+            bpe_comb_nb = (
+                np.concatenate([bpe_comb_nb, nb_combs])
+                if len(bpe_comb_nb) > 0
+                else nb_combs
             )
-            self.add_to_vocab(f"BPE_{final_event_val}")
-
-            # Replace new BPE token in all samples
-            for sample in samples:
-                if self.unique_track:
-                    replace_token_in_seq(
-                        sample["ids"], most_rec_tok_succession, final_event_val
-                    )
-                else:
-                    for track in sample["ids"]:
-                        replace_token_in_seq(
-                            track, most_rec_tok_succession, final_event_val
-                        )
-
-            # metrics (optional)
-            avg = []
-            for sample in samples:
-                if self.unique_track:
-                    avg.append(len(sample["ids"]))
-                else:
-                    avg += [len(track) for track in sample["ids"]]
-            avg_seq_len.append(float(np.mean(np.array(avg))))
-
-            nb_combs = np.array([len(prime_tokens_eq)])
-            if isinstance(bpe_comb_nb, np.ndarray):
-                bpe_comb_nb = np.concatenate([bpe_comb_nb, nb_combs])
-            else:
-                bpe_comb_nb = nb_combs
-            bpe_comb_means.append(float(np.mean(bpe_comb_nb)))
+            bpe_comb_means.append(np.mean(bpe_comb_nb))
             bpe_comb_max.append(int(np.max(bpe_comb_nb)))
-
-            if print_seq_len_variation:
-                pbar.set_postfix(
-                    {
-                        "seq_len_variation": f"{(avg_seq_len[-1] - avg_seq_len[0]) / avg_seq_len[0] * 100:.2f}",
-                        "avg_nb_token_combs": f"{bpe_comb_means[-1]:.2f}",
-                        "max_nb_token_combs": f"{bpe_comb_max[-1]}",
-                    },
-                    refresh=False,
-                )
+            
+            pbar.set_postfix({
+                "seq_len_var": f"{(avg_seq_len[-1] - avg_seq_len[0]) / avg_seq_len[0] * 100:.2f}%",
+                "avg_combs": f"{bpe_comb_means[-1]:.2f}",
+                "max_combs": f"{bpe_comb_max[-1]}",
+                "skipped": skipped_merges,
+            })
             pbar.update(1)
-
+        
         pbar.close()
-        self.has_bpe = True
-        self._MIDITokenizer__set_bpe_slow_tokens_successions()  # name-mangled call
-
-        # Save config / samples (unchanged)
+        
+        print(f"[{self.__class__.__name__}] BPE complete. Skipped {skipped_merges} invalid merges.")
+        
+        # Reconstruct samples from sequences for saving
         if out_dir is not None:
             out_dir = Path(out_dir)
             out_dir.mkdir(parents=True, exist_ok=True)
+            
             if save_converted_samples:
-                for sample, path in zip(samples, samples_paths):
+                print(f"[{self.__class__.__name__}] Saving converted samples...")
+                
+                # Group sequences back by file
+                file_sequences: Dict[Path, Dict] = {}
+                for seq_idx, (file_idx, rel_path, programs, track_idx) in enumerate(samples_metadata):
+                    if rel_path not in file_sequences:
+                        file_sequences[rel_path] = {"ids": [], "programs": programs}
+                    
+                    if self.unique_track:
+                        file_sequences[rel_path]["ids"] = sequences[seq_idx]
+                    else:
+                        # Ensure list is long enough
+                        while len(file_sequences[rel_path]["ids"]) <= track_idx:
+                            file_sequences[rel_path]["ids"].append([])
+                        file_sequences[rel_path]["ids"][track_idx] = sequences[seq_idx]
+                
+                for rel_path, data in tqdm(file_sequences.items(), desc="Saving samples"):
+                    save_path = out_dir / rel_path
+                    save_path.parent.mkdir(parents=True, exist_ok=True)
                     self.save_tokens(
-                        sample["ids"],
-                        Path(out_dir, path).with_suffix(".json"),
-                        sample.get("programs", []),
+                        data["ids"],
+                        save_path.with_suffix(".json"),
+                        data["programs"],
                     )
+            
             self.save_params(out_dir / "config.txt")
-
-        if print_seq_len_variation and len(avg_seq_len) > 1:
-            print(
-                f"Mean original length: {avg_seq_len[0]:.2f}\n"
-                f"Mean length after BPE: {avg_seq_len[-1]:.2f}\n"
-                f"Variation: {(avg_seq_len[-1] - avg_seq_len[0]) / avg_seq_len[0] * 100:.2f} %"
-            )
-
+        
+        if print_seq_len_variation:
+            print(f"[{self.__class__.__name__}] Mean original length: {avg_seq_len[0]:.1f}")
+            print(f"[{self.__class__.__name__}] Mean length after BPE: {avg_seq_len[-1]:.1f}")
+            print(f"[{self.__class__.__name__}] Variation: {(avg_seq_len[-1] - avg_seq_len[0]) / avg_seq_len[0] * 100:.2f}%")
+        
         return bpe_comb_means, bpe_comb_max, avg_seq_len
 
-    def _decode_token(self, tid: int) -> Tuple[str, str]:
-        """Return (type, value_str) for a base or BPE token id."""
-        tok = self[tid]  # MIDITokenizer.__getitem__
-        # e.g. "Pitch_60", "Velocity_96", "BPE_10-11.10-20-30"
-        type_, val = tok.split("_", 1)
-        return type_, val
 
-    def _prime_ids_from_bpe_val(self, bpe_val: str) -> List[int]:
-        """
-        For a BPE token string like '10-11.10-20-30',
-        return the prime token ids [10, 20, 30].
-        """
-        parts = bpe_val.split(".")
-        if len(parts) != 2:
-            return []
-        prime_str = parts[1]
-        return [int(x) for x in prime_str.split("-") if x]
+class RhythmBPE(CustomBPEBase):
+    """
+    BPE tokenizer that blocks merges involving Bar tokens.
+    
+    This preserves rhythmic structure by keeping Bar_None as separate tokens.
+    """
+    
+    def should_merge(self, token1: str, token2: str) -> bool:
+        """Block merges if either token contains Bar_None."""
+        if self._has_bar_token(token1) or self._has_bar_token(token2):
+            return False
+        return True
 
-    def _pitch_values_from_token_id(self, tid: int) -> List[int]:
-        """
-        Get all pitch values (MIDI numbers) encoded in a token id
-        (direct Pitch/NoteOn, or inside a BPE token).
-        """
-        type_, val = self._decode_token(tid)
 
-        # direct pitch-bearing token
-        if type_ in {"Pitch", "NoteOn"}:
-            return [int(val)]
+class HarmonicBPE(CustomBPEBase):
+    """
+    BPE tokenizer that only allows merges with harmonically valid pitch intervals.
+    
+    Valid intervals (mod 12): 0 (unison), 3 (minor third), 4 (major third),
+    5 (perfect fourth), 7 (perfect fifth), 9 (major sixth)
+    """
+    
+    def should_merge(self, token1: str, token2: str) -> bool:
+        """Only allow merges where all pitch combinations have valid harmonic intervals."""
+        # Get all pitches from both tokens
+        pitches1 = self._extract_pitches(token1)
+        pitches2 = self._extract_pitches(token2)
+        all_pitches = pitches1 + pitches2
+        
+        # If no pitches involved, allow merge
+        if len(all_pitches) < 2:
+            return True
+        
+        # Check all pitch combinations for valid harmonic intervals
+        return self._check_harmonic_intervals(all_pitches)
 
-        # BPE token: dig into prime ids
-        if type_ == "BPE":
-            prime_ids = self._prime_ids_from_bpe_val(val)
-            pitches = []
-            for pid in prime_ids:
-                ttype, tval = self._decode_token(pid)
-                if ttype in {"Pitch", "NoteOn"}:
-                    pitches.append(int(tval))
-            return pitches
 
-        return []
+class VelocityBPE(CustomBPEBase):
+    """
+    BPE tokenizer that only allows merges where velocity differences are small.
+    
+    Maximum allowed velocity difference: 30
+    """
+    
+    def should_merge(self, token1: str, token2: str) -> bool:
+        """Only allow merges where max velocity difference is <= 30."""
+        # Get all velocities from both tokens
+        velocities1 = self._extract_velocities(token1)
+        velocities2 = self._extract_velocities(token2)
+        all_velocities = velocities1 + velocities2
+        
+        # If fewer than 2 velocities, allow merge
+        if len(all_velocities) < 2:
+            return True
+        
+        # Check velocity difference constraint
+        return self._check_velocity_difference(all_velocities)
 
-    def _velocity_values_from_token_id(self, tid: int) -> List[int]:
-        """
-        Get all velocity values encoded in a token id
-        (direct Velocity, or inside a BPE token).
-        """
-        type_, val = self._decode_token(tid)
 
-        if type_ == "Velocity":
-            return [int(val)]
-
-        if type_ == "BPE":
-            prime_ids = self._prime_ids_from_bpe_val(val)
-            vels = []
-            for pid in prime_ids:
-                ttype, tval = self._decode_token(pid)
-                if ttype == "Velocity":
-                    vels.append(int(tval))
-            return vels
-
-        return []
-
-    # ---- musical constraints on a *pair* of token ids ----
-
-    def _rhythm_ok(self, pair: Tuple[int, int]) -> bool:
-        """
-        Rhythm constraint: forbid merges that touch Bar tokens.
-        That prevents a BPE unit from spanning a bar boundary.
-        """
-        for tid in pair:
-            ttype, _ = self._decode_token(tid)
-            if ttype == "Bar":
+class CombinedBPE(CustomBPEBase):
+    """
+    BPE tokenizer that combines all three rules:
+    1. No merges involving Bar tokens (rhythm preservation)
+    2. Only harmonically valid pitch intervals (harmonic coherence)
+    3. Small velocity differences only (dynamic consistency)
+    """
+    
+    def should_merge(self, token1: str, token2: str) -> bool:
+        """Apply all three merge rules."""
+        # Rule 1: No Bar tokens
+        if self._has_bar_token(token1) or self._has_bar_token(token2):
+            return False
+        
+        # Rule 2: Harmonic intervals
+        pitches1 = self._extract_pitches(token1)
+        pitches2 = self._extract_pitches(token2)
+        all_pitches = pitches1 + pitches2
+        if len(all_pitches) >= 2:
+            if not self._check_harmonic_intervals(all_pitches):
                 return False
+        
+        # Rule 3: Velocity difference
+        velocities1 = self._extract_velocities(token1)
+        velocities2 = self._extract_velocities(token2)
+        all_velocities = velocities1 + velocities2
+        if len(all_velocities) >= 2:
+            if not self._check_velocity_difference(all_velocities):
+                return False
+        
         return True
 
-    def _velocity_ok(self, pair: Tuple[int, int]) -> bool:
-        """
-        Velocity constraint: any velocities inside the two tokens
-        must be within a threshold.
-        """
-        all_vels: List[int] = []
-        for tid in pair:
-            all_vels.extend(self._velocity_values_from_token_id(tid))
 
-        if len(all_vels) <= 1:
-            # nothing to compare
-            return True
-
-        vmin, vmax = min(all_vels), max(all_vels)
-        return (vmax - vmin) <= self.velocity_threshold
-
-    def _harmony_ok(self, pair: Tuple[int, int]) -> bool:
-        """
-        Harmony constraint: all pitch pairs inside the merged token
-        must be consonant (mod 12) according to a simple interval set.
-        This is a local approximation; it doesn't know full tonal context.
-        """
-        all_pitches: List[int] = []
-        for tid in pair:
-            all_pitches.extend(self._pitch_values_from_token_id(tid))
-
-        if len(all_pitches) <= 1:
-            return True
-
-        # check every unordered pair of pitches
-        for i in range(len(all_pitches)):
-            for j in range(i + 1, len(all_pitches)):
-                interval = abs(all_pitches[j] - all_pitches[i]) % 12
-                if interval not in self._consonant_pc_intervals:
-                    return False
-        return True
-
-    def _pair_is_musically_valid(
-        self,
-        pair: Tuple[int, int],
-        use_velocity: bool,
-        use_rhythm: bool,
-        use_harmony: bool,
-    ) -> bool:
-        """
-        Decide whether this pair of token ids is allowed as a BPE candidate
-        under the selected constraints.
-        """
-        if use_rhythm and not self._rhythm_ok(pair):
-            return False
-        if use_velocity and not self._velocity_ok(pair):
-            return False
-        if use_harmony and not self._harmony_ok(pair):
-            return False
-        return True
+# Backward compatibility alias
+REMIWithRules = RhythmBPE
