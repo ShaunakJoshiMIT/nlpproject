@@ -482,7 +482,6 @@ if __name__ == "__main__":
                         tokens_path=tokens_path_no_bpe,
                         vocab_size=baseline.tokenization_config.bpe_vocab_size,
                         out_dir=baseline.tokens_path,
-                        files_lim=1000,  # Limit files for faster BPE learning
                     )
                     # baseline.tokenizer.apply_bpe_to_dataset(
                     #     tokens_path_no_bpe, baseline.tokens_path
